@@ -31,6 +31,7 @@ This package relies on a Python dictionary, referred to as plom solution diction
 
 ### To run interactively or using a Python script:
 1. Create a dictionary of job parameters. This dictionary should contain the training data. There are 2 ways (1.1 OR 1.2) to do this.
+
    1.1 Run the installed script, [`plom_make_input_template.py`](scripts/plom_make_input_template.py) to generate a [template PLoM input file](scripts/input_template.txt).
    ```bash
    plom_make_input_template.py
