@@ -43,6 +43,7 @@ This package relies on a Python dictionary, referred to as plom solution diction
    args = parse_input('input_template.txt')
    ```
    OR
+   
    1.2 Load the training data and define a dictionary as follows:
    ```python
    training = np.loadtxt('training.txt')
@@ -106,6 +107,7 @@ This package relies on a Python dictionary, referred to as plom solution diction
 A `.txt` or `.npy` file containing the generated samples will saved if the flag `save_samples` is set to `True` in the parameters dictionary (or input file).
 
 ### To run from CLI:
+
 1. Run the installed script, [`plom_make_input_template.py`](scripts/plom_make_input_template.py) to generate a [template PLoM input file](scripts/input_template.txt). 
    ```bash
    plom_make_input_template.py
