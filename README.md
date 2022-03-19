@@ -9,6 +9,10 @@ Open source Python package accompanying [Soize and Ghanem, 2016](https://doi.org
 ```bash
 pip3 install .
 ```
+If the above command hangs on Windows WSL2, you may need to clear the DISPLAY environment variable first:
+```bash
+export DISPLAY=
+```
 
 ## Dependencies
 Python 3.7+ and the following packages are needed.
