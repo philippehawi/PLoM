@@ -1,0 +1,63 @@
+# this is an input file for PLoM;
+# lines starting with '#' or '*' are ignored;
+# leading ' ', '\t', '\n' are ignored;
+# option and value should be separated by whitespace(s) or TAB(s);
+# inline comments begin with '#'
+#########################################################################
+
+
+*** PATH OF TRAINING (INPUT) DATA ***
+training           training.txt
+
+
+*** SCALING PARAMETERS ***
+scaling            True
+scaling_method     Normalization
+# scaling_method   MinMax
+
+
+*** PCA PARAMETERS ***
+## choose one pca_method and with option that directly follows it
+pca                True
+pca_method         cum_energy
+pca_cum_energy     0.999
+# pca_method       eigv_cutoff
+# pca_eigv_cutoff  0
+# pca_method       pca_dim
+# pca_dim          1
+
+
+*** DMAPS PARAMETERS ***
+dmaps              True
+dmaps_epsilon      auto # <float> or auto
+dmaps_kappa        1
+dmaps_L            0.1
+dmaps_first_evec   False
+dmaps_m_override   0
+dmaps_dist_method  standard
+
+
+*** SAMPLING PARAMETERS ***
+sampling           True
+num_samples        10
+parallel           False
+n_jobs             -1
+save_samples       True
+samples_fname      None # if None, file will be named using job_desc and save time
+samples_fmt        npy # npy or txt
+
+
+*** ITO PARAMETERS ***
+projection         True
+projection_source  pca # pca, scaling, or data
+projection_target  dmaps # dmaps or pca
+ito_f0             1
+ito_dr             0.1
+ito_steps          auto # <int> or auto
+ito_pot_method     3
+ito_kde_bw_factor  1
+
+
+*** JOB PARAMETERS ***
+job_desc           "2 circles"
+verbose            True
