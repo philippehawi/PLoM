@@ -3,7 +3,14 @@ Probabilistic Learning on Manifolds
 
 Open source Python package accompanying [Soize and Ghanem, 2016](https://doi.org/10.1016/j.jcp.2016.05.044) and [Soize and Ghanem, 2020](https://doi.org/10.48550/arXiv.2002.12653).
 
-"The PLoM considers a given initial dataset constituted of a small number of points given in an Euclidean space, which are interpreted as independent realizations of a vector-valued random variable for which its non-Gaussian probability measure is unknown but is, a priori, concentrated in an unknown subset of the Euclidean space. The objective is to construct a learned dataset constituted of additional realizations that allow the evaluation of converged statistics."
+The PLoM aims to generate replicas of a given dataset (the training data) with N samples, each of which is an n-vector.  The training set is construed as a graph in R^n with N-vertices, and each replica itself a graph that shares key features with the training set. Specifically, each sample is drawn from the same statistical distribution, and is in the span of the diffusion coordinates associated with the training set. The diffusion coordinates provide an embedding of the initial data into an m-dimensional Euclidean space that preserves geometric structure over multiple scales. Samples from the statistical distribution of the ensemble of graphs are generated through a projected Ito equation whose invariant measure is constrained to the diffusion manifold (the span of the diffusion coordinates).
+
+PLoM was designed to provide a measure of rigor to the setting where the small data challenge (small N) is exacerbated by high-dimensional data (large n).
+
+The effectiveness of PLoM has been demonstrated to forward and inverse problems with multi-physics and multi-scale behaviors as well as associated problems of optimization under uncertainty.  A complete statement of these problems, using standard formalisms, typically require a prohibitive number of function evaluations.
+
+In addition to constraints gleaned from the graph structure of the data, PLoM provides mechanisms to impose additional constraints in the form of functionals on the generated samples. A relative entropy formalism is implemented for this task.
+
 
 ## Installation
 ```bash
