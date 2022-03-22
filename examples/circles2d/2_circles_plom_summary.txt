@@ -1,0 +1,24 @@
+Job Summary
+-----------
+Job: 2_circles
+
+Training data dimensions: (400, 2)
+
+Scaling
+Used 'Normalization' method for scaling.
+
+PCA
+Used Cumulative Energy Content criteria for PCA.
+PCA features reduction: 2 -> 2
+
+DMAPS
+Input epsilon: auto
+Used epsilon: 15.60
+DMAPS eigenvalues: [0.12291802 0.12095759] [0.0123 ...]
+Manifold dimension = 2
+Used 2 eigenvectors for projection.
+Projected data (Z) dimensions: (400, 2)
+
+Sampling
+Generated 10 samples.
+Augmented data dimensions: (4000, 2)

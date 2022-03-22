@@ -13,6 +13,7 @@ In addition to constraints gleaned from the graph structure of the data, PLoM pr
 
 
 ## Installation
+After downloading the repository, run the following command from the root of `PLoM`.
 ```bash
 pip3 install .
 ```
@@ -88,8 +89,7 @@ This package relies on a Python dictionary, referred to as plom solution diction
 		  "parallel"          : False,
 		  "n_jobs"            : -1,
 		  "save_samples"      : True,
-		  "samples_fname"     : None, # if None, file will be named using job_desc and save time
-		  "samples_fmt"       : 'npy', # 'npy' or 'txt'
+		  "samples_fname"     : None, # if None, file will be named using job_desc_<savetime>.txt
 		  
 		  "projection"        : True,
 		  "projection_source" : 'pca', # 'pca', 'scaling', or 'data'
@@ -97,7 +97,7 @@ This package relies on a Python dictionary, referred to as plom solution diction
 		  "ito_f0"            : 1,
 		  "ito_dr"            : 0.1,
 		  "ito_steps"         : 'auto', # int or 'auto'
-		  "ito_pot_method"    : 2.1,
+		  "ito_pot_method"    : 3,
 		  "ito_kde_bw_factor" : 1,
 		  
 		  "job_desc"          : "Job description",
@@ -137,5 +137,5 @@ A `.txt` or `.npy` file containing the generated samples will saved if the flag 
    ```
 
 ## Examples
-* [Example 1: 2 circles in 2 dimensions](examples/circle2d/2circles_script.ipynb)
+* [Example 1: 2 circles in 2 dimensions](examples/circle2d/circles_script.ipynb)
 * [Example 2: spiral in 3 dimensions](examples/spiral3d/spiral_script.ipynb)

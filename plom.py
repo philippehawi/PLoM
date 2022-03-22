@@ -17,51 +17,6 @@ import matplotlib.pyplot as plt
 from scipy.spatial import distance_matrix
 from joblib import Parallel, delayed
 
-def parse_input(input_file="input.txt"):
-    
-    with open(input_file, 'r') as f:
-        lines = f.readlines()
-    
-    lines = [line.lstrip() for line in lines if 
-             not line.lstrip().startswith(('*', '#')) and len(line.lstrip())]
-    
-    lines = [line.split('#')[0].rstrip() for line in lines]
-    
-    lines = [line.replace("'", "").replace('"', '') for line in lines]
-    
-    args = dict()
-    for line in lines:
-        split = line.split()
-        key = split[0]
-        val = line.replace(key, '', 1).lstrip()
-        try:
-            val = int(val)
-        except:
-            try:
-                val = float(val)
-            except:
-                pass
-    
-        if (val == "True" or val == "true"):
-            val = True
-        if (val == "False" or val == "false"):
-            val = False
-        if (val == "None" or val == "none"):
-            val = None
-        
-        if key == "training":
-            try:
-                val = np.loadtxt(val)
-            except:
-                try:
-                    val = np.load(val)
-                except:
-                    raise OSError("Training data file not found. File should" +
-                                  " be raw text or Numpy array (.npy)")
-        
-        args[key] = val
-    
-    return args
 
 def initialize(training=None,
                
@@ -70,7 +25,7 @@ def initialize(training=None,
                
                pca=True,
                pca_method='cum_energy',
-               pca_cum_energy=1-1e-7,
+               pca_cum_energy=1-1e-5,
                pca_eigv_cutoff=0,
                pca_dim=1,
                
@@ -96,7 +51,6 @@ def initialize(training=None,
                n_jobs=-1,
                save_samples=True,
                samples_fname=None,
-               samples_fmt='npy',
                
                job_desc="Job 1",
                verbose=True
@@ -134,7 +88,6 @@ def initialize(training=None,
     options_dict['n_jobs']            = n_jobs
     options_dict['save_samples']      = save_samples
     options_dict['samples_fname']     = samples_fname
-    options_dict['samples_fmt']       = samples_fmt
     options_dict['verbose']           = verbose
     
     scaling_dict = dict()
@@ -188,7 +141,53 @@ def initialize(training=None,
     plom_dict['summary']  = None
 
     return plom_dict
-
+###############################################################################
+def parse_input(input_file="input.txt"):
+    
+    with open(input_file, 'r') as f:
+        lines = f.readlines()
+    
+    lines = [line.lstrip() for line in lines if 
+             not line.lstrip().startswith(('*', '#')) and len(line.lstrip())]
+    
+    lines = [line.split('#')[0].rstrip() for line in lines]
+    
+    lines = [line.replace("'", "").replace('"', '') for line in lines]
+    
+    args = dict()
+    for line in lines:
+        split = line.split()
+        key = split[0]
+        val = line.replace(key, '', 1).lstrip()
+        try:
+            val = int(val)
+        except:
+            try:
+                val = float(val)
+            except:
+                pass
+    
+        if (val == "True" or val == "true"):
+            val = True
+        if (val == "False" or val == "false"):
+            val = False
+        if (val == "None" or val == "none"):
+            val = None
+        
+        if key == "training":
+            try:
+                val = np.loadtxt(val)
+            except:
+                try:
+                    val = np.load(val)
+                except:
+                    raise OSError("Training data file not found. File should" +
+                                  " be raw text or Numpy array (.npy)")
+        
+        args[key] = val
+    
+    return args
+    
 ###############################################################################
 def _scaleMinMax(X, verbose=True):
     """
@@ -1842,26 +1841,27 @@ def sampling(plom_dict):
 def save_samples(plom_dict):
     
     samples_fname  = plom_dict['options']['samples_fname']
-    samples_fmt    = plom_dict['options']['samples_fmt']
     job_desc       = plom_dict['job_desc']
+    verbose        = plom_dict['options']['verbose']
     
-    if not samples_fmt.startswith('.'):
-        ext = '.' + samples_fmt
-    else:
-        ext = samples_fmt
+    if verbose:
+        print("\nSaving generated samples to file...")
     
     if samples_fname is None:
-        samples_fname = job_desc.replace(' ', '_') + \
-        '_samples_' + time.strftime('%X').replace(':', '_') + ext
-    else:
-        if not samples_fname.endswith(ext):
-            samples_fname = samples_fname + ext
-    
-    if ext == '.npy':
+        samples_fname = (job_desc.replace(' ', '_') + '_samples_'
+                        + time.strftime('%X').replace(':', '_') + '.txt')
+        
+    if samples_fname.endswith('.txt'):
+        np.savetxt(samples_fname, plom_dict['data']['augmented'])
+    elif samples_fname.endswith('.npy'):
         np.save(samples_fname, plom_dict['data']['augmented'])
     else:
+        samples_fname = samples_fname + '.txt'
         np.savetxt(samples_fname, plom_dict['data']['augmented'])
-        
+    
+    if verbose:
+        print(f"Samples saved to {samples_fname}\n")
+    
 ###############################################################################
 def make_summary(plom_dict):
     """
@@ -1940,7 +1940,7 @@ def make_summary(plom_dict):
 ###############################################################################
 def save_summary(plom_dict, fname=None):
     if fname is None:
-        fname = plom_dict['job_desc'] + "_summary.txt"
+        fname = plom_dict['job_desc'] + "_plom_summary.txt"
     summary = '\n'.join(plom_dict['summary'])
     with open(fname, "w") as summary_file:
         summary_file.write(summary)
@@ -1972,7 +1972,6 @@ def mse(X, Y, *, squared=True):
     
 ###############################################################################
 def _short_date():
-    print(0)
     return datetime.now().replace(microsecond=0)
 
 ###############################################################################
@@ -2561,7 +2560,7 @@ def get_samples(plom_dict, k=0):
 #     plt.show()
     
 ###############################################################################
-def _conditional_expectation(X, qoi_cols, cond_cols, cond_vals, bw=None,
+def _conditional_expectation(X, qoi_cols, cond_cols, cond_vals, sw=None,
                              verbose=True):
     """
     Get expectation of Q given W, E{Q | W=w0}.
@@ -2591,11 +2590,12 @@ def _conditional_expectation(X, qoi_cols, cond_cols, cond_vals, bw=None,
         print(f'Using N = {Nsim} samples.')
     
     ## Conditioning weights
-    s = (4 / (Nsim*(2+nw+nq))) ** (1/(4+nw+nq))
+    if sw is None:
+        sw = (4 / (Nsim*(2+nw+nq))) ** (1/(4+nw+nq))
     if verbose:
         print("\nComputing conditioning weights.")
-        print(f'Using bw = {s:.6f} for conditioning weights.')
-    weights = _get_conditional_weights(X[:, cond_cols], cond_vals, s,
+        print(f'Using bw = {sw:.6f} for conditioning weights.')
+    weights = _get_conditional_weights(X[:, cond_cols], cond_vals, sw,
                                        verbose=verbose)
     
     ## Expectation evaluation
@@ -2620,16 +2620,16 @@ def _conditional_expectation(X, qoi_cols, cond_cols, cond_vals, bw=None,
     return expn, var
 
 ###############################################################################
-def conditional_expectation(obj, qoi_cols, cond_cols, cond_vals, bw=None,
+def conditional_expectation(obj, qoi_cols, cond_cols, cond_vals, sw=None,
                              verbose=True):
     
     if isinstance(obj, dict):
         expectation, var = _conditional_expectation(obj['data']['augmented'], 
                                                     qoi_cols, cond_cols, 
-                                                    cond_vals, bw, verbose)
+                                                    cond_vals, sw, verbose)
     else:
         expectation, var = _conditional_expectation(obj, qoi_cols, cond_cols, 
-                                                    cond_vals, bw, verbose)
+                                                    cond_vals, sw, verbose)
     return expectation, var
 
 ###############################################################################
@@ -2693,8 +2693,8 @@ def _evaluate_kernels_sum(X, x, H, kernel_weights=None):
     return np.append(x, pdf)
 
 ###############################################################################
-def _conditional_pdf(X, qoi_cols, cond_cols, cond_vals, grid=None, bw=None, 
-                     pdf_Npts=200, parallel=True, verbose=True):
+def _conditional_pdf(X, qoi_cols, cond_cols, cond_vals, grid=None, sw=None, 
+                     sq=None, pdf_Npts=200, parallel=True, verbose=True):
     
     start = _short_date()
     if verbose:
@@ -2713,7 +2713,8 @@ distribution of <variable{"" if nq==1 else "s"} {qoi_cols}> conditioned on \
         print(f'Using N = {Nsim} samples.')
     
     ## Conditioning weights
-    sw = (4 / (Nsim*(2+nw+nq))) ** (1/(4+nw+nq))
+    if sw is None:
+        sw = (4 / (Nsim*(2+nw+nq))) ** (1/(4+nw+nq))
     if verbose:
         print("\nComputing conditioning weights.")
         print(f'Using bw = {sw:.6f} for conditioning weights.')
@@ -2739,7 +2740,7 @@ pts per dimension, {grid.shape[0]} points in total).')
 ({grid.shape[0]} points).')
 
     ## KDE bandwidth
-    if bw is None:
+    if sq is None:
         q_std = np.std(q, axis=0)
         sq = np.asarray((4 / (Nsim*(2+nw+nq))) ** (1/(4+nw+nq)) * q_std)
         if sq.ndim == 0:
@@ -2747,24 +2748,24 @@ pts per dimension, {grid.shape[0]} points in total).')
         else:
             H = np.diag(sq**2)
         if verbose:
-            print(f'\nComputing kernel bandwidth{"s" if nq==1 else ""} using \
+            print(f'\nComputing kernel bandwidth{"" if nq==1 else "s"} using \
 Silverman\'s rule of thumb.')
             with np.printoptions(precision=6):
                 print(f'Bandwidth used = {np.diag(np.sqrt(H))}')
     else:
-        bw = np.asarray(bw)
+        sq = np.asarray(sq)
         ## if H is specified as a scalar, i.e. 1-D pdf or isotropic n-D pdf
-        if bw.ndim == 0:
-            H = np.eye(nq)*(bw**2)
+        if sq.ndim == 0:
+            H = np.eye(nq)*(sq**2)
         ## if H is specified as a list of n BWs, i.e. non-isotropic n-D pdf
-        elif bw.ndim == 1:
-            if bw.shape[0] == 1: ## assume same bw for all variables
-                H = np.eye(nq)*(bw**2)
+        elif sq.ndim == 1:
+            if sq.shape[0] == 1: ## assume same bw for all variables
+                H = np.eye(nq)*(sq**2)
             else:
-                if bw.shape[0] != nq:
+                if sq.shape[0] != nq:
                     raise ValueError("Number of specified anisotropic \
 bandwidths must be equal to the number of conditioned variables (QoIs).")
-                H = np.diag(bw**2)
+                H = np.diag(sq**2)
         if verbose:
             print(f'\nUsing specified kernel bandwidth{"s" if nq==1 else ""}.')
             print(f'Bandwidth used = {np.diag(np.sqrt(H))}')
@@ -2791,16 +2792,15 @@ bandwidths must be equal to the number of conditioned variables (QoIs).")
     return np.array(result)
 
 ###############################################################################
-def conditional_pdf(obj, qoi_cols, cond_cols, cond_vals, grid=None, 
-                    bw=None, pdf_Npts=200, parallel=True, verbose=True): 
+def conditional_pdf(obj, qoi_cols, cond_cols, cond_vals, grid=None, sw=None, 
+                    sq=None, pdf_Npts=200, parallel=True, verbose=True): 
     if isinstance(obj, dict):
         pdf = _conditional_pdf(obj['data']['augmented'], qoi_cols, cond_cols, 
-                               cond_vals, grid, bw, pdf_Npts, parallel, 
+                               cond_vals, grid, sw, sq, pdf_Npts, parallel, 
                                verbose)
     else:
-        pdf = _conditional_pdf(obj, qoi_cols, cond_cols, cond_vals, grid, bw, 
-                               pdf_Npts, parallel, verbose)
+        pdf = _conditional_pdf(obj, qoi_cols, cond_cols, cond_vals, grid, sw, 
+                               sq, pdf_Npts, parallel, verbose)
     return pdf
 
 ###############################################################################
-
