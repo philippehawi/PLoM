@@ -11,7 +11,7 @@ The effectiveness of PLoM has been demonstrated to forward and inverse problems 
 
 In addition to constraints gleaned from the graph structure of the data, PLoM provides mechanisms to impose additional constraints in the form of functionals on the generated samples. A relative entropy formalism is implemented for this task.
 
-
+&nbsp;
 ## Installation
 After downloading the repository, run the following command from the root of `PLoM`.
 ```bash
@@ -22,6 +22,7 @@ If the above command hangs on Windows WSL2, you may need to clear the DISPLAY en
 export DISPLAY=
 ```
 
+&nbsp;
 ## Dependencies
 Python 3.7+ and the following packages are needed.
 
@@ -38,7 +39,8 @@ To install the dependencies found in [requirements.txt](requirements.txt) before
 pip3 install -r requirements.txt
 ```
 
-## How to use:
+&nbsp;
+## How to use
 This package relies on a Python dictionary, referred to as plom solution dictionary, to set the job parameters and save all calculated quantities. This dictionary should first be created and populated with the appropriate keys and job parameters (using `sol_dict = plom.initialize(**args)`). Then, the algorithm is run using `plom.run(sol_dict)`.
 
 ### To run interactively or using a Python script:
@@ -136,6 +138,7 @@ A `.txt` or `.npy` file containing the generated samples will saved if the flag 
    plom_run.py custom_input_file.txt
    ```
 
+&nbsp;
 ## Examples
 * [Example 1: 2 circles in 2 dimensions](examples/circles2d/circles_script.ipynb)
 * [Example 2: spiral in 3 dimensions](examples/spiral3d/spiral_script.ipynb)

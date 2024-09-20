@@ -22,6 +22,7 @@ lines = [
  '*** PCA PARAMETERS ***\n',
  '## choose one pca_method and with option that directly follows it\n',
  'pca                True\n',
+ 'pca_scale_evecs    True\n',
  'pca_method         cum_energy\n',
  'pca_cum_energy     0.999\n',
  '# pca_method       eigv_cutoff\n',

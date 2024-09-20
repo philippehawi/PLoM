@@ -19,6 +19,7 @@ scaling_method     Normalization
 *** PCA PARAMETERS ***
 ## choose one pca_method and with option that directly follows it
 pca                True
+pca_scale_evecs    True
 pca_method         cum_energy
 pca_cum_energy     0.999
 # pca_method       eigv_cutoff

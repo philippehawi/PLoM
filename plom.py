@@ -16,6 +16,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.spatial import distance_matrix
 from joblib import Parallel, delayed
+from scipy.optimize import differential_evolution
 
 
 def initialize(training=None,
@@ -28,6 +29,7 @@ def initialize(training=None,
                pca_cum_energy=1-1e-5,
                pca_eigv_cutoff=0,
                pca_dim=1,
+               pca_scale_evecs=True,
                
                dmaps=True,
                dmaps_epsilon='auto',
@@ -37,20 +39,24 @@ def initialize(training=None,
                dmaps_m_override=0,
                dmaps_dist_method='standard',
                
-               sampling=True,
                projection=True,
                projection_source='pca',
                projection_target='dmaps',
+               
+               sampling=True,
                num_samples=1,
                ito_f0=1,
                ito_dr=0.1,
                ito_steps='auto',
-               ito_pot_method=2,
+               ito_pot_method=3,
                ito_kde_bw_factor=1,
+               
                parallel=False,
                n_jobs=-1,
+               
                save_samples=True,
                samples_fname=None,
+               samples_fmt='txt',
                
                job_desc="Job 1",
                verbose=True
@@ -74,6 +80,7 @@ def initialize(training=None,
     options_dict['scaling_method']    = scaling_method
     options_dict['pca']               = pca   
     options_dict['pca_method']        = pca_method
+    options_dict['pca_scale_evecs']   = pca_scale_evecs
     options_dict['dmaps']             = dmaps
     options_dict['dmap_first_evec']   = dmaps_first_evec
     options_dict['dmaps_m_override']  = dmaps_m_override
@@ -88,6 +95,7 @@ def initialize(training=None,
     options_dict['n_jobs']            = n_jobs
     options_dict['save_samples']      = save_samples
     options_dict['samples_fname']     = samples_fname
+    options_dict['samples_fmt']     = samples_fmt
     options_dict['verbose']           = verbose
     
     scaling_dict = dict()
@@ -99,7 +107,9 @@ def initialize(training=None,
     
     pca_dict = dict()
     pca_dict['training']         = None
-    pca_dict['inv_evecs']        = None
+    pca_dict['scaled_evecs_inv'] = None
+    pca_dict['scaled_evecs']     = None
+    pca_dict['evecs']            = None
     pca_dict['mean']             = None
     pca_dict['eigvals']          = None
     pca_dict['eigvals_trunc']    = None
@@ -139,6 +149,22 @@ def initialize(training=None,
     plom_dict['dmaps']    = dmaps_dict
     plom_dict['ito']      = ito_dict
     plom_dict['summary']  = None
+    
+    if scaling == False:
+        if projection_source == "scaling":
+            raise ValueError("Cannot set <projection_source> to 'scaling' when <scaling> is set to False")
+        if projection_target == "scaling":
+            raise ValueError("Cannot set <projection_target> to 'scaling' when <scaling> is set to False")
+    
+    if pca == False:
+        if projection_source == "pca":
+            raise ValueError("Cannot set <projection_source> to 'pca' when <pca> is set to False")
+        if projection_target == "pca":
+            raise ValueError("Cannot set <projection_target> to 'pca' when <pca> is set to False")
+    
+    if dmaps == False and projection_target == "dmaps":
+        raise ValueError("Cannot set <projection_target> to 'dmaps' when <dmaps> is set to False")
+        
 
     return plom_dict
 ###############################################################################
@@ -391,6 +417,12 @@ def _pca(X, method='cum_energy', cumulative_energy=(1-1e-7),
         Used if method = 'pca_dim'.
         Specifies dimension (nu = pca_dim) to be used for the truncated basis.
     
+    scale_evecs: bool, optional (default is True)
+        If True, the principal components (eigenvectors of the covariance matrix
+        of X, onto which X is project) are scaled by the inverse of the square 
+        root of the eigenvalues:
+        scaled_eigvecs = eigvecs / sqrt_eigvals
+    
     verbose : bool, optional (default is True)
         If True, print relevant information.
     
@@ -400,7 +432,16 @@ def _pca(X, method='cum_energy', cumulative_energy=(1-1e-7),
         Normalized data.
     
     scaled_eigvecs_inv : ndarray of shape (n_features, nu)
-        Scaled eigenvectors (to be used for denormalization).
+        Eigenvectors scaled by square root of eigenvalues (to be used for 
+        denormalization if 'scale_evecs' is True).
+    
+    scaled_eigvecs: ndarray of shape (n_features, nu)
+        Eigenvectors scaled by the inverse of the square root of the 
+        eigenvalues. Used for projection of X if 'scale_evecs' is True.
+    
+    eigvecs: ndarray of shape (n_features, nu)
+        Unscaled eigenvectors. Used for projection of X if 'scale_evecs' is 
+        False.
     
     means : ndarray of shape (n_features, )
         Means of the individual features.
@@ -457,22 +498,21 @@ def _pca(X, method='cum_energy', cumulative_energy=(1-1e-7),
     num_dropped_features = n - len(eigvals_trunc)
     eigvecs = eigvecs[:, num_dropped_features:]
     sqrt_eigvals = np.sqrt(eigvals_trunc)
-    if scale_evecs:
-        scaled_eigvecs = eigvecs / sqrt_eigvals
-        scaled_eigvecs_inv = eigvecs * sqrt_eigvals
-    else:
-        scaled_eigvecs = eigvecs
-        scaled_eigvecs_inv = eigvecs
+    scaled_eigvecs = eigvecs / sqrt_eigvals
+    scaled_eigvecs_inv = eigvecs * sqrt_eigvals
     
     # compute X_pca as wide matrix (then transpose); faster in later comps
-    X_pca = np.dot(scaled_eigvecs.T, X.T).T
+    if scale_evecs:
+        X_pca = np.dot(scaled_eigvecs.T, X.T).T
+    else:
+        X_pca = np.dot(eigvecs.T, X.T).T
     
     # compute X_pca as tall matrix; slower in later comps
     # X_pca = np.dot(X, scaled_eigvecs)
     
     if verbose:
         print("Output data dimensions:", X_pca.shape)
-    return (X_pca, scaled_eigvecs_inv, scaled_eigvecs, means, eigvals, 
+    return (X_pca, scaled_eigvecs_inv, scaled_eigvecs, eigvecs, means, eigvals, 
             eigvals_trunc)
 
 ###############################################################################
@@ -497,26 +537,29 @@ def pca(plom_dict):
     else:
         X = plom_dict['data']['training']
     
-    method  = plom_dict['options']['pca_method']
-    verbose = plom_dict['options']['verbose']
+    method      = plom_dict['options']['pca_method']
+    scale_evecs = plom_dict['options']['pca_scale_evecs']
+    verbose     = plom_dict['options']['verbose']
+    
     cumulative_energy  = plom_dict['input']['pca_cum_energy']
     eigenvalues_cutoff = plom_dict['input']['pca_eigv_cutoff']
     pca_dim            = plom_dict['input']['pca_dim']
     
-    X_pca, evecs_inv, _, means, evals, evals_trunc = _pca(X, method,
-                                                          cumulative_energy, 
-                                                          eigenvalues_cutoff,
-                                                          pca_dim,
-                                                          verbose=verbose)
+    (X_pca, scaled_evecs_inv, scaled_evecs, evecs, 
+    means, evals, evals_trunc) = _pca(X, method, cumulative_energy, 
+                                      eigenvalues_cutoff, pca_dim, scale_evecs,
+                                      verbose=verbose)
     
-    plom_dict['pca']['training']      = X_pca
-    plom_dict['pca']['inv_evecs']     = evecs_inv
-    plom_dict['pca']['mean']          = means
-    plom_dict['pca']['eigvals']       = evals
-    plom_dict['pca']['eigvals_trunc'] = evals_trunc
+    plom_dict['pca']['training']         = X_pca
+    plom_dict['pca']['scaled_evecs_inv'] = scaled_evecs_inv
+    plom_dict['pca']['scaled_evecs']     = scaled_evecs
+    plom_dict['pca']['evecs']            = evecs
+    plom_dict['pca']['mean']             = means
+    plom_dict['pca']['eigvals']          = evals
+    plom_dict['pca']['eigvals_trunc']    = evals_trunc
 
 ###############################################################################
-def _inverse_pca(X, scaled_eigvecs_inv, means):
+def _inverse_pca(X, eigvecs, means):
     """
     Project data set X from PCA space back to original data space.
 
@@ -526,8 +569,9 @@ def _inverse_pca(X, scaled_eigvecs_inv, means):
         Data set in PCA space (nu-dimensional) to be projected back to original
         data space (n_features-dimensional).
 
-    scaled_eigvecs_inv : ndarray of shape (n_features, nu)
-        Scaled eigenvectors.
+    eigvecs : ndarray of shape (n_features, nu)
+        Eigenvectors (principal components) onto which original data X was 
+        projected.
     
     means : ndarray of shape (n_features, )
         Means of the individual features.
@@ -538,7 +582,7 @@ def _inverse_pca(X, scaled_eigvecs_inv, means):
         Data set projected back to original n_features-dimensional space.
 
     """
-    X = np.dot(X, scaled_eigvecs_inv.T) + means    
+    X = np.dot(X, eigvecs.T) + means    
     return X
 
 ###############################################################################
@@ -557,7 +601,12 @@ def inverse_pca(plom_dict):
     None.
 
     """
-    eigvecs = plom_dict['pca']['inv_evecs']
+    scale_evecs = plom_dict['options']['pca_scale_evecs']
+    if scale_evecs:
+        eigvecs = plom_dict['pca']['scaled_evecs_inv']
+    else:
+        eigvecs = plom_dict['pca']['evecs']
+        
     mean    = plom_dict['pca']['mean']
     
     scaling = plom_dict['options']['scaling']
@@ -568,7 +617,7 @@ def inverse_pca(plom_dict):
         reconst_training = plom_dict['pca']['training']
     
     augmented = plom_dict['pca']['augmented']
-        
+    
     if reconst_training is not None:
         X = _inverse_pca(reconst_training, eigvecs, mean)
         if scaling:
@@ -643,13 +692,17 @@ def sample_projection(plom_dict):
         H = plom_dict['pca']['training']
     elif projection_source == "scaling":
         H = plom_dict['scaling']['training']
-    else:
+    elif projection_target == "data":
         H = plom_dict['data']['training']
     
     if projection_target == "dmaps":
         g = plom_dict['dmaps']['reduced_basis']
     elif projection_target == "pca":
         g = plom_dict['pca']['training']
+    elif projection_target == "scaling":
+        g = plom_dict['scaling']['training']
+    elif projection_target == "data":
+        H = plom_dict['data']['training']
     
     if H is None:
         if verbose:
@@ -1216,21 +1269,6 @@ def _get_L(H, u, kde_bw_factor=1, method=2):
         shat = s / np.sqrt(s**2 + (N-1)/N)
         scaled_H = H * shat / s
         
-        dist_mat_list = np.asfortranarray(np.tile(scaled_H.T, (N, 1)) - 
-                        np.repeat(u.T, N, axis=0))
-        norms_list = np.exp((-1/(2*shat**2)) * 
-                     np.linalg.norm(dist_mat_list, axis=1)**2)
-        q_list = np.sum(np.reshape(norms_list, (N, N)), axis=1) / N
-        product = dist_mat_list * norms_list[:, None] / shat**2 / N
-        dq_list = np.sum(np.reshape(product, (N, N, -1)), axis=1)
-        pot = (dq_list / q_list[:,None]).T
-    
-    elif method==3: # joint KDE
-        nu, N = H.shape
-        s = (4 / (N*(2+nu))) ** (1/(nu+4))*kde_bw_factor
-        shat = s / np.sqrt(s**2 + (N-1)/N)
-        scaled_H = H * shat / s
-        
         dist_mat_list = [(scaled_H.T - x).T for x in u.T]
         
         norms_list = np.exp((-1/(2*shat**2)) * np.array(list(map(\
@@ -1242,6 +1280,23 @@ def _get_L(H, u, kde_bw_factor=1, method=2):
         
         dq_list = product/shat**2/N
         pot = (dq_list/q_list[:,None]).transpose()
+    
+    elif method==3: # joint KDE
+        nu, N = H.shape
+        s = (4 / (N*(2+nu))) ** (1/(nu+4))*kde_bw_factor
+        shat = s / np.sqrt(s**2 + (N-1)/N)
+        scaled_H = H * shat / s
+        
+        dist_mat_list = np.asfortranarray(np.tile(scaled_H.T, (N, 1)) - 
+                        np.repeat(u.T, N, axis=0))
+        norms_list = np.exp((-1/(2*shat**2)) * 
+                     np.linalg.norm(dist_mat_list, axis=1)**2)
+        q_list = np.sum(np.reshape(norms_list, (N, N)), axis=1) / N
+        product = dist_mat_list * norms_list[:, None] / shat**2 / N
+        dq_list = np.sum(np.reshape(product, (N, N, -1)), axis=1)
+        pot = (dq_list / q_list[:,None]).T
+    
+    
     
     elif method==4:    
         nu, N = H.shape
@@ -1841,6 +1896,7 @@ def sampling(plom_dict):
 def save_samples(plom_dict):
     
     samples_fname  = plom_dict['options']['samples_fname']
+    samples_fmt    = plom_dict['options']['samples_fmt']
     job_desc       = plom_dict['job_desc']
     verbose        = plom_dict['options']['verbose']
     
@@ -1849,7 +1905,9 @@ def save_samples(plom_dict):
     
     if samples_fname is None:
         samples_fname = (job_desc.replace(' ', '_') + '_samples_'
-                        + time.strftime('%X').replace(':', '_') + '.txt')
+                        + time.strftime('%X').replace(':', '_') + "." + samples_fmt)
+    else:
+        samples_fname = f"{samples_fname}.{samples_fmt}"
         
     if samples_fname.endswith('.txt'):
         np.savetxt(samples_fname, plom_dict['data']['augmented'])
@@ -1887,7 +1945,6 @@ def make_summary(plom_dict):
     dmaps    = plom_dict['dmaps']
     
     training_shape = data['training'].shape
-    pca_shape      = pca['training'].shape
     sc_method      = options['scaling_method']
     
     summary = ["Job Summary\n-----------"]
@@ -1909,6 +1966,7 @@ def make_summary(plom_dict):
             summary.append("Used specified cutoff value criteria for PCA.")
         elif options['pca_method']=='pca_dim':
             summary.append("Used specified PCA dimension.")
+        pca_shape = pca['training'].shape
         summary.append(f"PCA features reduction: {training_shape[1]} -> " +
                        f"{pca_shape[1]}\n")
 
@@ -2560,8 +2618,8 @@ def get_samples(plom_dict, k=0):
 #     plt.show()
     
 ###############################################################################
-def _conditional_expectation(X, qoi_cols, cond_cols, cond_vals, sw=None,
-                             verbose=True):
+def _conditional_expectation(X, qoi_cols, cond_cols, cond_vals, weights=None, sw=None,
+                             verbose=True, return_bw=False):
     """
     Get expectation of Q given W, E{Q | W=w0}.
     
@@ -2589,14 +2647,35 @@ def _conditional_expectation(X, qoi_cols, cond_cols, cond_vals, sw=None,
 <{cond_vals}>.')
         print(f'Using N = {Nsim} samples.')
     
+    # Conditioning weights
+    # if sw is None:
+        # sw = (4 / (Nsim*(2+nw+nq))) ** (1/(4+nw+nq))
+    # if verbose:
+        # print("\nComputing conditioning weights.")
+        # print(f'Using bw = {sw:.6f} for conditioning weights.')
+    # weights = _get_conditional_weights(X[:, cond_cols], cond_vals, sw,
+                                       # verbose=verbose)
+    
     ## Conditioning weights
-    if sw is None:
-        sw = (4 / (Nsim*(2+nw+nq))) ** (1/(4+nw+nq))
-    if verbose:
-        print("\nComputing conditioning weights.")
-        print(f'Using bw = {sw:.6f} for conditioning weights.')
-    weights = _get_conditional_weights(X[:, cond_cols], cond_vals, sw,
-                                       verbose=verbose)
+    if weights is None:
+        if type(sw)is str and sw == "optimal":
+            if np.atleast_1d(qoi_cols).shape[0] > 1:
+                print("Optimal bandwidth can be found for single QoI only. Using Silverman's bandwidth instead.")
+                sw = None
+            else:
+                if verbose:
+                    print("\nFinding optimal bandwidth for conditioning.")
+                sw = conditioning_optimal_bw(X, cond_cols, qoi_cols)
+        if sw is None:
+            sw = (4 / (Nsim*(2+nw+nq))) ** (1/(4+nw+nq))
+        if verbose:
+            print("\nComputing conditioning weights.")
+            print(f'Using bw = {sw} for conditioning weights.')
+        weights = _get_conditional_weights(X[:, cond_cols], cond_vals, sw,
+                                           verbose=verbose)
+    else:
+        print("\nUsing user-specified weights.")
+    Nsim = np.sum(weights)**2 / np.sum(weights**2)
     
     ## Expectation evaluation
     if verbose:
@@ -2617,7 +2696,10 @@ def _conditional_expectation(X, qoi_cols, cond_cols, cond_vals, sw=None,
         print('\nConditioning complete at', end)
         print('Time =', end-start)
     
-    return expn, var
+    if return_bw:
+        return expn, var, sw
+    else:
+        return expn, var
 
 ###############################################################################
 def conditional_expectation(obj, qoi_cols, cond_cols, cond_vals, sw=None,
@@ -2659,7 +2741,7 @@ def _get_conditional_weights(W, w0, sw=None, nq=1, parallel=False, batches=2,
                                 np.linalg.norm((W[-r:]-w0)/w_std, axis=0))
         w_norms = -1/(2*sw**2) * w_norms**2
     else:
-        w_norms = -1/(2*sw**2) * np.linalg.norm((W-w0)/w_std, axis=1)**2
+        w_norms = -np.linalg.norm((W-w0)/(w_std*np.sqrt(2*sw**2)), axis=1)**2 # verified; allows for vector-valued bandwidth sw
 
     w_dist = np.exp(w_norms - np.max(w_norms))
     w_dist_tot = np.sum(w_dist)
@@ -2693,7 +2775,145 @@ def _evaluate_kernels_sum(X, x, H, kernel_weights=None):
     return np.append(x, pdf)
 
 ###############################################################################
-def _conditional_pdf(X, qoi_cols, cond_cols, cond_vals, grid=None, sw=None, 
+def forward_model(x, data, qoi_col=None, cond_cols=None, h=None):
+    """
+    ...
+
+    Parameters
+    ----------
+    x: ...
+        Values of the input variables for which y is predicted
+    
+    data: ndarray of shape (n_samples, n_features)
+        Dataset used to estimate the 'n_features'-dimensional joint PDF.
+
+    qoi_col: int
+        index of the quantity of interest (model output)
+    
+    cond_cols: List of int or None, optional (default is None)
+        Predefined list of indices of conditional features to rank.
+        If None, assume it is all features except the 
+        one specified by qoi_col:
+        cond_cols = [i for i in range(n_features) if i not in qoi_col]
+
+    
+
+    """
+    if np.min(h) < 0:
+        raise ValueError('Bandwidth(s) must be nonnegative.')
+    
+    x = np.atleast_2d(np.array(np.squeeze([x])))
+    N_x, n_x = x.shape
+    if N_x == 1 and n_x > 1:
+        x = x.T
+    
+    if qoi_col == None:
+        qoi_col = np.atleast_1d(n_x)
+    if cond_cols == None:
+        qoi_col = np.atleast_1d(qoi_col)
+        cond_cols = np.array([i for i in range(n_x) if i not in qoi_col])
+    
+    assert n_x == len(cond_cols), "Dimension mismatch between cond_cols and x"
+
+    y_pred = []
+    for i in range(N_x):
+        exp, var = _conditional_expectation(data, qoi_col, cond_cols, x[i], sw=h, verbose=False)
+        y_pred.append(exp)
+    
+    return np.array(y_pred) if len(y_pred) > 1 else y_pred[0]
+
+###############################################################################
+def _fitness(h, X_train, y_train, model_data, verbose=False):
+    if verbose:
+        print("Evaluating fitness")
+    
+    y_pred = forward_model(X_train, model_data, h=np.array(h))
+    mse_ = mse(y_train, y_pred)
+    
+    if verbose:
+        print("H =", h)
+        print("MSE =", mse_, "\n")
+    return (mse_)
+
+###############################################################################
+def conditioning_optimal_bw(data, cond_cols, qoi_col, split_frac=0.1, 
+                            split_seed=None, optimizer='ga', opt_seed=None,
+                            verbose=False):
+    
+    qoi_col = np.atleast_1d(qoi_col)
+    if qoi_col.shape[0] > 1:
+        raise ValueError("Optimal bandwidth can be found for single QoI only.")
+    
+    xy_idx = np.hstack((np.atleast_1d(cond_cols), np.atleast_1d(qoi_col)))
+    
+    data = data[:, xy_idx]
+    
+    if split_seed is not None:
+        model_data, train_data = train_test_split(data, test_size=split_frac, random_state=split_seed, shuffle=True)
+    else:
+        model_data, train_data = train_test_split(data, test_size=split_frac, random_state=None, shuffle=False)
+    
+    X_train = train_data[:, :-1]
+    y_train = train_data[:, -1]
+    
+    print(X_train.shape)
+    
+    fitness_args = (X_train, y_train, model_data)
+    bounds = [(1e-6, 1e4) for i in range(len(cond_cols))]
+    opt_seed = 24
+    if verbose:
+        print("Finding optimal bandwidth")
+    result = differential_evolution(_fitness, bounds, args=fitness_args, seed=opt_seed, workers=1, polish=True)
+    return result.x
+    
+###############################################################################
+def conditioning_silverman_bw(data, cond_cols, qoi_col):
+    Nsim = data.shape[0]
+    nw = len(np.atleast_1d(cond_cols))
+    nq = len(np.atleast_1d(qoi_col))
+    return (4 / (Nsim*(2+nw+nq))) ** (1/(4+nw+nq))
+    
+###############################################################################
+def train_test_split(data, test_size=0.1, random_state=None, shuffle=True):
+    """
+    Splits the dataset into train and test sets based on the specified test size.
+    
+    Parameters:
+    - data: The dataset to split (NumPy array or pandas DataFrame).
+    - test_size: Proportion of the dataset to include in the test split (between 0.0 and 1.0).
+    - random_state: Controls the shuffling applied to the data before splitting. Pass an int for reproducible results.
+    - shuffle: Whether or not to shuffle the data before splitting.
+
+    Returns:
+    - train_data: The training subset of the data.
+    - test_data: The testing subset of the data.
+    """
+    # Set the random seed for reproducibility
+    if random_state is not None:
+        np.random.seed(random_state)
+    
+    # Calculate the number of test samples
+    n_samples = len(data)
+    n_test = int(np.floor(test_size * n_samples))
+    n_train = n_samples - n_test
+    
+    # Generate a shuffled array of indices
+    indices = np.arange(n_samples)
+    if shuffle:
+        np.random.shuffle(indices)
+    
+    # Split the indices
+    train_indices = indices[:n_train]
+    test_indices = indices[n_train:]
+        
+    # Use the indices to split the data
+    train_data = data[train_indices]
+    test_data = data[test_indices]
+    
+    return train_data, test_data
+
+###############################################################################
+def _conditional_pdf(X, qoi_cols, cond_cols, cond_vals, weights=None, grid=None, sw=None, 
                      sq=None, pdf_Npts=200, parallel=True, verbose=True):
     
     start = _short_date()
@@ -2713,18 +2933,34 @@ distribution of <variable{"" if nq==1 else "s"} {qoi_cols}> conditioned on \
         print(f'Using N = {Nsim} samples.')
     
     ## Conditioning weights
-    if sw is None:
-        sw = (4 / (Nsim*(2+nw+nq))) ** (1/(4+nw+nq))
-    if verbose:
-        print("\nComputing conditioning weights.")
-        print(f'Using bw = {sw:.6f} for conditioning weights.')
-    weights = _get_conditional_weights(X[:, cond_cols], cond_vals, sw,
-                                       verbose=verbose)
+    if weights is None:
+        if sw == "optimal":
+            if nq > 1:
+                print("Optimal bandwidth can be found for single QoI only. Using Silverman's bandwidth instead.")
+                sw = None
+            else:
+                if verbose:
+                    print("\nFinding optimal bandwidth for conditioning.")
+                sw = _conditioning_optimal_bw(X, cond_cols, qoi_col)
+                if verbose:
+                    print(f"\nOptimal bandwidth = {sw}")
+        if sw is None:
+            sw = (4 / (Nsim*(2+nw+nq))) ** (1/(4+nw+nq))
+        if verbose:
+            print("\nComputing conditioning weights.")
+            print(f'Using bw = {sw} for conditioning weights.')
+        weights = _get_conditional_weights(X[:, cond_cols], cond_vals, sw,
+                                           verbose=verbose)
+    else:
+        print("\nUsing user-specified weights.")
+    Nsim = np.sum(weights)**2 / np.sum(weights**2)
     
     ## PDF evaluation grid
     if grid is None:
+        refine_grid = True
         if nq == 1:
-            grid = np.linspace(min(q), max(q), pdf_Npts)
+            x_range = np.max(q) - np.min(q)
+            grid = np.linspace(np.min(q) - 0.2*x_range, np.max(q)+0.2*x_range, pdf_Npts)
         else:
             axes_pts = np.linspace(np.min(q, axis=0), np.max(q, axis=0), 
                                    pdf_Npts, axis=0)
@@ -2733,7 +2969,7 @@ distribution of <variable{"" if nq==1 else "s"} {qoi_cols}> conditioned on \
         if verbose:
             print(f'\nGenerating PDF evaluation grid from data ({pdf_Npts} \
 pts per dimension, {grid.shape[0]} points in total).')
-    else:            
+    else:
         grid = np.asarray(grid)
         if verbose:
             print(f'\nUsing specified grid for PDF evaluation \
@@ -2741,31 +2977,37 @@ pts per dimension, {grid.shape[0]} points in total).')
 
     ## KDE bandwidth
     if sq is None:
-        q_std = np.std(q, axis=0)
-        sq = np.asarray((4 / (Nsim*(2+nw+nq))) ** (1/(4+nw+nq)) * q_std)
+        q_std = np.atleast_2d(np.cov(q, bias=False, aweights=weights)**(0.5))
+        nw = 0
+        # sq = np.asarray((4 / (Nsim*(2+nw+nq))) ** (1/(4+nw+nq)) * q_std)
+        sq = (4 / (Nsim*(2+nw+nq))) ** (1/(4+nw+nq)) * q_std
         if sq.ndim == 0:
             H = np.atleast_2d(sq**2)
         else:
-            H = np.diag(sq**2)
+            # H = np.diag(sq**2)
+            H = sq**2
         if verbose:
             print(f'\nComputing kernel bandwidth{"" if nq==1 else "s"} using \
 Silverman\'s rule of thumb.')
             with np.printoptions(precision=6):
-                print(f'Bandwidth used = {np.diag(np.sqrt(H))}')
+                print(f'Bandwidth used = {np.diag(np.sqrt(H)) / q_std}')
     else:
-        sq = np.asarray(sq)
-        ## if H is specified as a scalar, i.e. 1-D pdf or isotropic n-D pdf
-        if sq.ndim == 0:
-            H = np.eye(nq)*(sq**2)
-        ## if H is specified as a list of n BWs, i.e. non-isotropic n-D pdf
-        elif sq.ndim == 1:
-            if sq.shape[0] == 1: ## assume same bw for all variables
-                H = np.eye(nq)*(sq**2)
-            else:
-                if sq.shape[0] != nq:
-                    raise ValueError("Number of specified anisotropic \
-bandwidths must be equal to the number of conditioned variables (QoIs).")
-                H = np.diag(sq**2)
+        q_std = np.atleast_2d(np.cov(q, bias=False, aweights=weights)**(0.5))
+        # sq = np.asarray(sq) * q_std
+        sq = sq * q_std
+        H = sq ** 2
+#         ## if H is specified as a scalar, i.e. 1-D pdf or isotropic n-D pdf
+#         if sq.ndim == 0:
+#             H = np.eye(nq)*(sq**2)
+#         ## if H is specified as a list of n BWs, i.e. non-isotropic n-D pdf
+#         elif sq.ndim == 1:
+#             if sq.shape[0] == 1: ## assume same bw for all variables
+#                 H = np.eye(nq)*(sq**2)
+#             else:
+#                 if sq.shape[0] != nq:
+#                     raise ValueError("Number of specified anisotropic \
+# bandwidths must be equal to the number of conditioned variables (QoIs).")
+#                 H = np.diag(sq**2)
         if verbose:
             print(f'\nUsing specified kernel bandwidth{"s" if nq==1 else ""}.')
             print(f'Bandwidth used = {np.diag(np.sqrt(H))}')
@@ -2784,6 +3026,34 @@ bandwidths must be equal to the number of conditioned variables (QoIs).")
         for x in grid:
             result.append(_evaluate_kernels_sum(q, x, H, weights))
     
+    if refine_grid:
+        result = np.array(result)
+        pdf_max = np.max(result[:, 1])
+        i_ = 0
+        for i in range(result.shape[0]):
+            if result[i, 1] > 0.000001*pdf_max:
+                xmin = result[i, 0]
+                break
+        for j in range(result.shape[0]-1, i, -1):
+            if result[j, 1] > 0.000001*pdf_max:
+                xmax = result[j, 0]
+                break
+        grid = np.linspace(xmin, xmax, pdf_Npts)
+
+        if parallel:
+            if verbose:
+                print(f'\nEvaluating KDE on {grid.shape[0]} points in parallel.')
+            result = Parallel(n_jobs=-1)(
+                delayed(_evaluate_kernels_sum)(q, grid[i], H, weights) 
+                for i in range(len(grid)))
+        else:
+            if verbose:
+                print(f'\nEvaluating KDE on {grid.shape[0]} points.')
+            result = []
+            for x in grid:
+                result.append(_evaluate_kernels_sum(q, x, H, weights))       
+
+
     end = _short_date()
     if verbose:
         print('\nConditioning complete at', end)
@@ -2792,15 +3062,71 @@ bandwidths must be equal to the number of conditioned variables (QoIs).")
     return np.array(result)
 
 ###############################################################################
-def conditional_pdf(obj, qoi_cols, cond_cols, cond_vals, grid=None, sw=None, 
+def conditional_pdf(obj, qoi_cols, cond_cols, cond_vals, weights=None, grid=None, sw=None, 
                     sq=None, pdf_Npts=200, parallel=True, verbose=True): 
     if isinstance(obj, dict):
         pdf = _conditional_pdf(obj['data']['augmented'], qoi_cols, cond_cols, 
-                               cond_vals, grid, sw, sq, pdf_Npts, parallel, 
+                               cond_vals, weights, grid, sw, sq, pdf_Npts, parallel, 
                                verbose)
     else:
-        pdf = _conditional_pdf(obj, qoi_cols, cond_cols, cond_vals, grid, sw, 
+        pdf = _conditional_pdf(obj, qoi_cols, cond_cols, cond_vals, weights, grid, sw, 
                                sq, pdf_Npts, parallel, verbose)
     return pdf
 
 ###############################################################################
+def _optimize(data,
+              ojective_col, objective_function=lambda q: q, fitness_type='expectation', fitness_arg=None):
+    """
+    Optimize...
+    
+    Parameters
+    ----------
+    data : ndarray of shape (n_samples, n_features)
+        Dataset used to calculate statistics of fitness and constraints 
+        variables.
+    
+    ojective_col : int
+        Index of column (feature) to be minimized (directly or through the 
+        function 'objective_function').
+    
+    objective_function : lambda function
+        Function that maps the feature specified by 'ojective_col' to a new 
+        quantity to be minimized. By default, the feature itself will be 
+        minimized.
+    
+    fitness_type : string, optional (default is 'expectation')
+        The type of statistic used for fitness calculation of 
+        'objective_function(ojective_col)' conditioned on the input parameters 
+        candidate. This statistic is calculated from the conditional PDF.
+        If 'expectation', the mean is use.
+        If 'percentile', the percentile specified by 'fitness_arg' is used.
+        If 'cdf', the CDF at 'fitness_arg' is used.
+    
+    fitness_arg : float, optional (default is None)
+        Value to be used for fitness calculation if 'fitness_type' requires it.
+    
+    
+    
+    
+    """
+    
+    q_idx = ojective_col
+    q     = objective_function(data[:, q_idx])
+    
+    def fitness(w):
+        global weights
+        weights = _get_conditional_weights(data[:, cond_cols], cond_vals, sw,
+                                           verbose=False)
+    
+    
+    
+    
+    
+    return 0
+    
+    
+    
+    
+    
+    
+#plom.show_options()
