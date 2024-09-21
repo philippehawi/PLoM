@@ -2817,7 +2817,8 @@ def forward_model(x, data, qoi_col=None, cond_cols=None, h=None):
 
     y_pred = []
     for i in range(N_x):
-        exp, var = _conditional_expectation(data, qoi_col, cond_cols, x[i], sw=h, verbose=False)
+        exp, var = _conditional_expectation(data, qoi_col, cond_cols, x[i], sw=h,
+                                            verbose=False)
         y_pred.append(exp)
     
     return np.array(y_pred) if len(y_pred) > 1 else y_pred[0]
@@ -2838,7 +2839,8 @@ def _fitness(h, X_train, y_train, model_data, verbose=False):
 ###############################################################################
 def conditioning_optimal_bw(data, cond_cols, qoi_col, split_frac=0.1, 
                             split_seed=None, optimizer='ga', opt_seed=None,
-                            verbose=False):
+                            ga_bounds=(1e-09, 1e3), ga_workers=1, polish=True,
+                            return_mse=False, verbose=False):
     
     qoi_col = np.atleast_1d(qoi_col)
     if qoi_col.shape[0] > 1:
@@ -2849,29 +2851,50 @@ def conditioning_optimal_bw(data, cond_cols, qoi_col, split_frac=0.1,
     data = data[:, xy_idx]
     
     if split_seed is not None:
-        model_data, train_data = train_test_split(data, test_size=split_frac, random_state=split_seed, shuffle=True)
+        model_data, train_data = train_test_split(data, test_size=split_frac, 
+                                                  random_state=split_seed, 
+                                                  shuffle=True)
     else:
-        model_data, train_data = train_test_split(data, test_size=split_frac, random_state=None, shuffle=False)
+        model_data, train_data = train_test_split(data, test_size=split_frac, 
+                                                  random_state=None, 
+                                                  shuffle=False)
     
     X_train = train_data[:, :-1]
     y_train = train_data[:, -1]
     
-    print(X_train.shape)
-    
     fitness_args = (X_train, y_train, model_data)
-    bounds = [(1e-6, 1e4) for i in range(len(cond_cols))]
-    opt_seed = 24
+    bounds = [ga_bounds for i in range(len(cond_cols))]
     if verbose:
         print("Finding optimal bandwidth")
-    result = differential_evolution(_fitness, bounds, args=fitness_args, seed=opt_seed, workers=1, polish=True)
-    return result.x
+    result = differential_evolution(_fitness, bounds, args=fitness_args, 
+                                    seed=opt_seed, workers=ga_workers, 
+                                    polish=polish)
+    return result.x, result.fun if return_mse else result.x
     
 ###############################################################################
-def conditioning_silverman_bw(data, cond_cols, qoi_col):
+def conditioning_silverman_bw(data, cond_cols, qoi_col, return_mse=False, 
+                              split_frac=0.1, split_seed=None):
     Nsim = data.shape[0]
     nw = len(np.atleast_1d(cond_cols))
     nq = len(np.atleast_1d(qoi_col))
-    return (4 / (Nsim*(2+nw+nq))) ** (1/(4+nw+nq))
+    h = (4 / (Nsim*(2+nw+nq))) ** (1/(4+nw+nq))
+    
+    if return_mse:
+        xy_idx = np.hstack((np.atleast_1d(cond_cols), np.atleast_1d(qoi_col)))
+        data = data[:, xy_idx]
+        if split_seed is not None:
+            model_data, train_data = train_test_split(data, test_size=split_frac,
+                                                      random_state=split_seed,
+                                                      shuffle=True)
+        else:
+            model_data, train_data = train_test_split(data, test_size=split_frac,
+                                                      random_state=None, 
+                                                      shuffle=False)
+        X_train = train_data[:, :-1]
+        y_train = train_data[:, -1]
+        mse = _fitness(h, X_train, y_train, model_data)
+    
+    return h, mse if return_mse else h
     
 ###############################################################################
 def train_test_split(data, test_size=0.1, random_state=None, shuffle=True):
