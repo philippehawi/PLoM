@@ -2802,8 +2802,9 @@ def forward_model(x, data, qoi_col=None, cond_cols=None, h=None):
     if np.min(h) < 0:
         raise ValueError('Bandwidth(s) must be nonnegative.')
     
-    x = np.atleast_2d(np.array(np.squeeze([x])))
-    N_x, n_x = x.shape
+    n_x = data.shape[1] - 1
+    x = np.array(x).reshape(-1, n_x)
+    N_x = x.shape[0]
     if N_x == 1 and n_x > 1:
         x = x.T
     
@@ -2824,9 +2825,16 @@ def forward_model(x, data, qoi_col=None, cond_cols=None, h=None):
     return np.array(y_pred) if len(y_pred) > 1 else y_pred[0]
 
 ###############################################################################
-def _fitness(h, X_train, y_train, model_data, verbose=False):
+def _fitness(h, X_train, y_train, model_data, logscale=False, h_full=None, h_idx=None, verbose=False):
     if verbose:
         print("Evaluating fitness")
+    
+    if h_full is not None and h_idx is not None:
+        h_full[h_idx] = h
+        h = h_full
+    
+    if logscale:
+        h = np.exp(h)
     
     y_pred = forward_model(X_train, model_data, h=np.array(h))
     mse_ = mse(y_train, y_pred)
@@ -2837,7 +2845,7 @@ def _fitness(h, X_train, y_train, model_data, verbose=False):
     return (mse_)
 
 ###############################################################################
-def conditioning_optimal_bw(data, cond_cols, qoi_col, split_frac=0.1, 
+def conditioning_jointly_optimal_bw(data, cond_cols, qoi_col, split_frac=0.1, 
                             split_seed=None, optimizer='ga', opt_seed=None,
                             ga_bounds=(1e-09, 1e3), ga_workers=1, polish=True,
                             return_mse=False, verbose=False):
@@ -2870,6 +2878,185 @@ def conditioning_optimal_bw(data, cond_cols, qoi_col, split_frac=0.1,
                                     seed=opt_seed, workers=ga_workers, 
                                     polish=polish)
     return result.x, result.fun if return_mse else result.x
+
+###############################################################################
+def conditioning_marginally_optimal_bw(
+    data, cond_cols=None, qoi_col=None, split_frac=0.1, ranking_kfolds=1, 
+    opt_kfolds=1, opt_cycles=2, split_seed=None, shuffle=True, optimizer='ga', 
+    opt_seed=None, ga_bounds=(1e-09, 1e3), logscale=False, ga_workers=1, polish=True, 
+    return_mse=False, verbose=False):
+    
+    data = np.atleast_2d(np.array(np.squeeze([data])))
+    N, n = data.shape
+    
+    if qoi_col == None:
+        qoi_col = np.atleast_1d(n)
+    if cond_cols == None:
+        qoi_col = np.atleast_1d(qoi_col)
+        cond_cols = np.array([i for i in range(n) if i not in qoi_col])
+    
+    qoi_col = np.atleast_1d(qoi_col)
+    if qoi_col.shape[0] > 1:
+        raise ValueError("Optimal bandwidth can be found for single QoI only.")
+    
+    xy_idx = np.hstack((np.atleast_1d(cond_cols), np.atleast_1d(qoi_col)))
+    
+    data = data[:, xy_idx]
+    
+    if split_seed is not None:
+        shuffle = True
+    
+    # if split_seed is not None:
+        # model_data, train_data = train_test_split(data, test_size=split_frac, 
+                                                  # random_state=split_seed, 
+                                                  # shuffle=True)
+    # else:
+        # model_data, train_data = train_test_split(data, test_size=split_frac, 
+                                                  # random_state=None, 
+                                                  # shuffle=False)
+    
+    # X_train = train_data[:, :-1]
+    # y_train = train_data[:, -1]
+    
+    # fitness_args = (X_train, y_train, model_data)
+    # bounds = [ga_bounds for i in range(len(cond_cols))]
+    # if verbose:
+        # print("Finding optimal bandwidth")
+    # result = differential_evolution(_fitness, bounds, args=fitness_args, 
+                                    # seed=opt_seed, workers=ga_workers, 
+                                    # polish=polish)
+    
+    h_opt_full_k = []
+    mse_opt_full_k = []
+
+    if verbose:
+        print("OPTMIZING SINGLE BANDWIDTHS FOR RANKING PURPOSES\n")
+        print("******************\n")
+    for k in range(ranking_kfolds):
+        if verbose:
+            print(f"Ranking fold {k+1}/{ranking_kfolds}\n")
+        seed = split_seed
+        if split_seed is not None:
+            seed = k + split_seed
+        model_data, train_data = train_test_split(data, test_size=split_frac, random_state=seed, shuffle=True)
+        X_train = train_data[:, :-1]
+        y_train = train_data[:, -1]
+        
+        h_opt_full = []
+        mse_opt_full = []
+        
+        for cond_col_idx in range(len(cond_cols)):
+            cond_col = cond_cols[cond_col_idx]
+            if verbose:
+                print(f"Optimizing bandwidth for variable {cond_col}")
+            fitness_args = (X_train[:, cond_col_idx].reshape(-1, 1), y_train, model_data[:, [cond_col_idx, -1]], logscale)
+            
+            if logscale:
+                bounds = [(np.log(ga_bounds[0]), np.log(ga_bounds[1]))]
+            else:
+                bounds = [ga_bounds]
+            result = differential_evolution(_fitness, bounds, args=fitness_args, seed=opt_seed, workers=ga_workers, polish=polish, strategy='randtobest1bin')
+            
+            if logscale:
+                h_opt = np.exp(result.x)
+            else:
+                h_opt = result.x
+            h_opt_full.append(h_opt)
+            mse_opt = [result.fun]
+            mse_opt_full.append(mse_opt)
+            if verbose:
+                print(f"H_{cond_col} =", h_opt)
+                print("MSE (from optimizer) =", round(mse_opt[0], 3), "\n")
+
+        h_opt_full_k.append(h_opt_full)
+        mse_opt_full_k.append(mse_opt_full)
+        
+        if verbose:
+            print("******************\n")
+
+    h_opt_full_k = np.array(h_opt_full_k).mean(axis=0)
+    mse_opt_full_k = np.array(mse_opt_full_k).mean(axis=0)
+    
+    if verbose:
+        print("K-fold averaged single marginally optimal bandwidths:", h_opt_full_k[:, 0].tolist())
+        print("K-fold averaged single marginally optimal MSE:", mse_opt_full_k[:, 0].tolist())
+    
+    h_opt_marg = np.array(h_opt_full_k).reshape(-1,)
+    mse_opt = np.array(mse_opt_full_k).reshape(-1,)
+    h_mse = np.array([range(len(h_opt_marg)), h_opt_marg, mse_opt]).T
+    ind = np.argsort(h_mse[:, 2])
+    sorted_h_mse = h_mse[ind]
+    cond_cols_sorted_idx = sorted_h_mse[:, 0].astype(int).tolist()
+    if verbose:
+            print("\n*******************************************\n")
+
+
+    #-# optimizing ranked bandwidths
+    
+    if verbose:
+        print('\n\n\nOPTIMIZING RANKED BANDWIDTHS SEQUENTIALLY\n')
+    # h_opt = sorted_h_mse[:, 1]
+    if logscale:
+        h_opt = np.ones_like(cond_cols_sorted_idx) * np.log(ga_bounds[1])
+    else:
+        h_opt = np.ones_like(cond_cols_sorted_idx) * ga_bounds[1]
+
+    total_runs = opt_cycles * opt_kfolds * len(cond_cols)
+    counter = 0
+
+    for i_ in range(len(cond_cols) * opt_cycles):
+        i = i_ % len(cond_cols)
+        cond_col_idx = cond_cols_sorted_idx[i]
+        # fixed_values = [h for h in h_opt]
+        # fixed_values[i] = None
+        # _fitness(h, X_train, y_train, model_data, h_full=None, h_idx=None, verbose=False)
+
+        h_opt_k = []
+        mse_opt_k = []
+        for k in range(opt_kfolds):
+            counter += 1
+            seed = split_seed
+            if split_seed is not None:
+                seed = 2*k + split_seed
+            model_data, train_data = train_test_split(data, test_size=split_frac, random_state=seed, shuffle=True)
+            X_train = train_data[:, :-1]
+            y_train = train_data[:, -1]
+
+            if verbose:
+                print(f"{counter}/{total_runs}\nOptimizing bandwidth for variable {cond_cols_sorted_idx[i]} ({i+1}/{len(cond_cols)}), Cycle {i_ // len(cond_cols)+1}/{opt_cycles}, fold = {k+1}/{opt_kfolds}:")
+            
+            fitness_args = (X_train, y_train, model_data, logscale, h_opt, cond_col_idx)
+            
+            if logscale:
+                bounds = [(np.log(ga_bounds[0]), np.log(ga_bounds[1]))]
+            else:
+                bounds = [ga_bounds]
+            result = differential_evolution(_fitness, bounds, args=fitness_args, seed=opt_seed, workers=ga_workers, polish=polish, strategy='randtobest1bin')
+            
+            h_opt_updated = np.copy(h_opt)
+            h_opt_updated[cond_col_idx] = result.x
+            h_opt_k.append(h_opt_updated)
+            mse_opt = [result.fun]
+            mse_opt_k.append(mse_opt)
+            if verbose:
+                print(f"H =", np.exp(h_opt) if logscale else np.array(h_opt))
+                print("MSE =", round(mse_opt[0], 6), "\n")
+        h_opt_k = np.array(h_opt_k).mean(axis=0)
+        h_opt = h_opt_k
+        mse_opt_k = np.array(mse_opt_k).mean()
+        mse_opt = float(mse_opt_k)
+        if verbose:
+            print("Average fold H =", np.exp(h_opt) if logscale else np.array(h_opt))
+            print("Average fold MSE =", round(mse_opt, 6))
+            print("\n******************\n")
+
+    h_opt_final = h_opt
+    mse_opt_final = mse_opt
+    
+    h_opt_final = np.exp(h_opt_final) if logscale else np.array(h_opt_final)
+    h_opt_final = h_opt_final.reshape(-1,)
+    
+    return h_opt_final, mse_opt_final
     
 ###############################################################################
 def conditioning_silverman_bw(data, cond_cols, qoi_col, return_mse=False, 
