@@ -2996,6 +2996,57 @@ def forward_model(x, data, qoi_col=None, cond_cols=None, h=None):
 
 ###############################################################################
 def _fitness(h, X_train, y_train, model_data, logscale=False, h_full=None, h_idx=None, verbose=False):
+    """
+    Evaluates the fitness of the model based on the mean squared error (MSE) between 
+    the predicted outputs and the actual outputs for the training data.
+
+    This function computes the predicted values using the forward model and calculates 
+    the MSE as a measure of the model's performance. The bandwidth parameter can be 
+    adjusted, and results can be printed for debugging or evaluation purposes.
+
+    Parameters
+    ----------
+    h: float or array-like
+        The bandwidth parameter(s) used in the forward model. If `logscale` is True, 
+        this value is treated as being in log-space.
+
+    X_train: ndarray of shape (n_samples, n_features)
+        The training input data used for making predictions, where n_samples is the 
+        number of samples and n_features is the number of features.
+
+    y_train: ndarray of shape (n_samples,)
+        The actual output values corresponding to `X_train`, used to compute the MSE.
+
+    model_data: ndarray of shape (n_samples, n_features)
+        The dataset used by the forward model to generate predictions. It should 
+        include both the conditional features and the quantity of interest.
+
+    logscale: bool, optional (default=False)
+        If True, the bandwidth parameter `h` is treated as being in log-space and 
+        is exponentiated before being used.
+
+    h_full: ndarray or None, optional (default=None)
+        An optional array to store the current bandwidth value at the specified index. 
+        This allows tracking multiple bandwidth values.
+
+    h_idx: int or None, optional (default=None)
+        The index in `h_full` where the current bandwidth value should be stored. 
+        This is relevant only if `h_full` is provided.
+
+    verbose: bool, optional (default=False)
+        If True, detailed output regarding the evaluation process is printed to the console.
+
+    Returns
+    -------
+    mse_: float
+        The computed mean squared error (MSE) between the predicted values and the 
+        actual output values for the training data.
+
+    Notes
+    -----
+    The function will print the current bandwidth and MSE values if `verbose` is set to True.
+    """
+    
     if verbose:
         print("Evaluating fitness")
     
