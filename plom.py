@@ -2033,6 +2033,13 @@ def _short_date():
     return datetime.now().replace(microsecond=0)
 
 ###############################################################################
+def _normalize_values(values):
+    exponents = [np.floor(np.log10(abs(num))) for num in values]
+    min_exponent = int(min(exponents))
+    normalized_values = [num / 10**min_exponent for num in values]
+    return normalized_values, min_exponent
+
+###############################################################################
 def run(plom_dict):
 
 ## Start    
@@ -2618,26 +2625,78 @@ def get_samples(plom_dict, k=0):
 #     plt.show()
     
 ###############################################################################
-def _conditional_expectation(X, qoi_cols, cond_cols, cond_vals, weights=None, sw=None,
-                             verbose=True, return_bw=False):
+def _conditional_expectation(data, qoi_cols, cond_cols, cond_vals, weights=None,
+                             sw=None, bw_opt_kwargs={}, return_bw=False, 
+                             verbose=True):
     """
-    Get expectation of Q given W, E{Q | W=w0}.
+    Computes the conditional expectation of a quantity of interest (QoI), E[Q | W=w0], 
+    given a set of conditioning variables and their corresponding values. Optionally, 
+    the function can compute optimal bandwidths for kernel smoothing when calculating 
+    conditioning weights.
+
+    :param data: (np.ndarray) A 2D array of shape (N, D), where N is the number of samples 
+                 and D is the number of variables. The data matrix contains the samples 
+                 from which the conditional expectation is computed.
+                 
+    :param qoi_cols: (int or list of int) Index or indices of the column(s) in `data` that represent 
+                     the quantity or quantities of interest (QoI) for which the conditional expectation 
+                     is computed. If a single integer is provided, an optimal bandwidth for the QoI can 
+                     be found and used. If multiple QoIs are provided (a list of integers), Silverman's 
+                     bandwidth will be used, even if the user requests an optimal bandwidth.
+                     
+    :param cond_cols: (list of int) List of column indices in `data` that represent the conditioning 
+                      variables (RVs) W.
+                      
+    :param cond_vals: (list or np.ndarray) List or array of values for the conditioning variables 
+                      W=w0. The length should match the number of conditioning variables specified 
+                      in `cond_cols`.
     
-    :arguments:
-        X:         (np.ndarray) data matrix containing N>>1 samples
-        cond_cols: (list) column indices of conditioning RVs
-        cond_val:  (list) values of conditioning RVs
-        qoi_cols:   (int) column index of RV for which expectation is computed
-        
-    :return:
-        (float) conditional expectation of Q, E{Q | W=w0}
+    :param weights: (np.ndarray, optional) Precomputed weights for conditioning. If provided, these 
+                    weights will be considered final and used directly. If not provided, the function 
+                    will compute the weights based on the selected bandwidth method (Silverman's or 
+                    optimal).
+                    
+    :param sw: (str or float, optional) Specifies the bandwidth for kernel smoothing. If a numerical 
+               value (either a single float or a vector of floats) is provided, it will be directly 
+               used as the bandwidth. If a string is provided:
+               - "optimal_joint": Jointly optimizes a bandwidth vector of size equal to the number of 
+                 conditioning variables.
+               - "optimal_marg": Optimizes the bandwidth vector one dimension at a time (marginally).
+               If no valid option is provided or if multiple QoIs are specified, Silverman's bandwidth 
+               will be used.
+               Default is None.
+    
+    :param bw_opt_kwargs: (dict, optional) Additional keyword arguments to pass to the bandwidth 
+                          optimization functions when `sw` is set to "optimal_joint" or "optimal_marg".
+    
+    :param return_bw: (bool, optional) If True, the function returns the computed or selected bandwidth 
+                      along with the conditional expectation and variance. Default is False.
+                      
+    :param verbose: (bool, optional) If True, the function prints progress and intermediate results. 
+                    Default is True.
+
+    :returns:
+        - expn: (float or np.ndarray) The conditional expectation of the QoI, E[Q | W=w0].
+        - var:  (float or np.ndarray) The conditional variance of the QoI, Var(Q | W=w0).
+        - sw:   (float, optional) The bandwidth used for conditioning weights, returned if `return_bw=True`.
+    
+    :raises:
+        - ValueError: If an invalid option for bandwidth is provided or if optimal bandwidth 
+                      computation is attempted for multiple QoIs.
+    
+    :notes:
+        - This function can handle multivariate QoI (multiple columns) and multivariate conditioning 
+          (multiple conditioning variables).
+        - The kernel bandwidth for conditioning weights can either be pre-specified, computed using 
+          Silverman's rule, or optimized using joint/marginal optimization methods.
     """
+    
     start = _short_date()
     if verbose:
         print('\n***********************************************************')
         print('Conditional expectation evaluation starting at', start)
     
-    Nsim = X.shape[0]
+    Nsim = data.shape[0]
     nw = np.atleast_1d(cond_cols).shape[0]
     nq = 1
     
@@ -2656,22 +2715,35 @@ def _conditional_expectation(X, qoi_cols, cond_cols, cond_vals, weights=None, sw
     # weights = _get_conditional_weights(X[:, cond_cols], cond_vals, sw,
                                        # verbose=verbose)
     
-    ## Conditioning weights
+    ### Conditioning weights
     if weights is None:
-        if type(sw)is str and sw == "optimal":
+        if type(sw) is str and sw.startswith("optimal"):
             if np.atleast_1d(qoi_cols).shape[0] > 1:
                 print("Optimal bandwidth can be found for single QoI only. Using Silverman's bandwidth instead.")
                 sw = None
             else:
                 if verbose:
                     print("\nFinding optimal bandwidth for conditioning.")
-                sw = conditioning_optimal_bw(X, cond_cols, qoi_cols)
+                if sw == "optimal_joint":
+                    sw = conditioning_jointly_optimal_bw(
+                        data, cond_cols, qoi_cols, verbose=verbose,
+                        **bw_opt_kwargs)
+                elif sw == "optimal_marg":
+                    sw = conditioning_marginally_optimal_bw(
+                        data, cond_cols, qoi_cols, verbose=verbose,
+                        **bw_opt_kwargs)
+                else:
+                    if verbose:
+                        print("Invalid option for bandwidth. Using Silverman's bandwidth.")
+                    sw = None
         if sw is None:
+            if verbose:
+                print("Using Silverman's bandwidth.")
             sw = (4 / (Nsim*(2+nw+nq))) ** (1/(4+nw+nq))
         if verbose:
             print("\nComputing conditioning weights.")
             print(f'Using bw = {sw} for conditioning weights.')
-        weights = _get_conditional_weights(X[:, cond_cols], cond_vals, sw,
+        weights = _get_conditional_weights(data[:, cond_cols], cond_vals, sw,
                                            verbose=verbose)
     else:
         print("\nUsing user-specified weights.")
@@ -2680,7 +2752,7 @@ def _conditional_expectation(X, qoi_cols, cond_cols, cond_vals, weights=None, sw
     ## Expectation evaluation
     if verbose:
         print("\nComputing expectation value.")
-    q = X[:, qoi_cols]
+    q = data[:, qoi_cols]
     expn = np.atleast_1d(np.dot(weights, q))
     var = np.atleast_1d(np.dot(weights, q*q) - expn**2)
     if expn.shape[0] == 1:
@@ -2702,18 +2774,71 @@ def _conditional_expectation(X, qoi_cols, cond_cols, cond_vals, weights=None, sw
         return expn, var
 
 ###############################################################################
-def conditional_expectation(obj, qoi_cols, cond_cols, cond_vals, sw=None,
-                             verbose=True):
+def conditional_expectation(obj, qoi_cols, cond_cols, cond_vals, weights=None, 
+                            sw=None, bw_opt_kwargs={}, return_bw=False, 
+                            verbose=True):
+    """
+    Compute the conditional expectation of a quantity of interest (QoI) given certain conditioning variables.
+
+    This function serves as a wrapper around the `_conditional_expectation` function, which calculates the 
+    expected value of a specified QoI conditioned on provided values of other random variables (RVs).
+
+    :param obj: (dict or np.ndarray) 
+        - If a dictionary, it should contain a key 'data' with a subkey 'augmented' holding the data matrix.
+        - If a NumPy array, it should represent the data matrix directly.
+        
+    :param qoi_cols: (int or list) 
+        Column index or indices of the RV for which the conditional expectation is computed.
+
+    :param cond_cols: (list) 
+        Column indices of conditioning RVs.
+
+    :param cond_vals: (list) 
+        Values of the conditioning RVs corresponding to `cond_cols`.
+
+    :param weights: (np.ndarray, optional) 
+        User-specified weights for the conditioning. If `None`, the function will compute the weights based on bandwidth.
+
+    :param sw: (float or str, optional) 
+        Specifies the bandwidth for the conditioning weights. 
+        If a numerical value is provided, it will be directly used. 
+        If 'optimal_joint' or 'optimal_marg', the function will compute an optimal bandwidth vector.
+
+    :param bw_opt_kwargs: (dict, optional) 
+        Additional keyword arguments for bandwidth optimization.
+
+    :param return_bw: (bool, optional) 
+        If `True`, the function returns the computed bandwidth along with the expectation and variance.
+
+    :param verbose: (bool, optional) 
+        If `True`, the function will print verbose output during execution.
+
+    :raises ValueError: 
+        If `obj` is not of type `dict` or `np.ndarray`.
+
+    :return: 
+        - (float, float) if `return_bw` is `False`: The conditional expectation and variance of the QoI.
+        - (float, float, float) if `return_bw` is `True`: The conditional expectation, variance, and bandwidth.
+    """
+                            
+    args = {'qoi_cols': qoi_cols, 'cond_cols': cond_cols, 'cond_vals': cond_vals,
+            'weights': weights, 'sw': sw, 'bw_opt_kwargs': bw_opt_kwargs, 
+            'return_bw': return_bw, 'verbose': verbose}
     
     if isinstance(obj, dict):
-        expectation, var = _conditional_expectation(obj['data']['augmented'], 
-                                                    qoi_cols, cond_cols, 
-                                                    cond_vals, sw, verbose)
+        data = obj['data']['augmented']
+    elif isinstance(obj, np.ndarray):
+        data = obj
     else:
-        expectation, var = _conditional_expectation(obj, qoi_cols, cond_cols, 
-                                                    cond_vals, sw, verbose)
-    return expectation, var
-
+        raise ValueError("Invalid type for 'obj'. Expected dict or np.ndarray.")
+    
+    if return_bw:
+        expn, var, sw = _conditional_expectation(data, **args)
+        return expn, var, sw
+    else:
+        expn, var = _conditional_expectation(data, **args)
+        return expn, var
+    
 ###############################################################################
 def _get_conditional_weights(W, w0, sw=None, nq=1, parallel=False, batches=2,
                               verbose=True):
@@ -2845,52 +2970,17 @@ def _fitness(h, X_train, y_train, model_data, logscale=False, h_full=None, h_idx
     return (mse_)
 
 ###############################################################################
-def conditioning_jointly_optimal_bw(data, cond_cols, qoi_col, split_frac=0.1, 
-                            split_seed=None, optimizer='ga', opt_seed=None,
-                            ga_bounds=(1e-09, 1e3), ga_workers=1, polish=True,
-                            return_mse=False, verbose=False):
-    
-    qoi_col = np.atleast_1d(qoi_col)
-    if qoi_col.shape[0] > 1:
-        raise ValueError("Optimal bandwidth can be found for single QoI only.")
-    
-    xy_idx = np.hstack((np.atleast_1d(cond_cols), np.atleast_1d(qoi_col)))
-    
-    data = data[:, xy_idx]
-    
-    if split_seed is not None:
-        model_data, train_data = train_test_split(data, test_size=split_frac, 
-                                                  random_state=split_seed, 
-                                                  shuffle=True)
-    else:
-        model_data, train_data = train_test_split(data, test_size=split_frac, 
-                                                  random_state=None, 
-                                                  shuffle=False)
-    
-    X_train = train_data[:, :-1]
-    y_train = train_data[:, -1]
-    
-    fitness_args = (X_train, y_train, model_data)
-    bounds = [ga_bounds for i in range(len(cond_cols))]
-    if verbose:
-        print("Finding optimal bandwidth")
-    result = differential_evolution(_fitness, bounds, args=fitness_args, 
-                                    seed=opt_seed, workers=ga_workers, 
-                                    polish=polish)
-    return result.x, result.fun if return_mse else result.x
-
-###############################################################################
-def conditioning_marginally_optimal_bw(
-    data, cond_cols=None, qoi_col=None, split_frac=0.1, ranking_kfolds=1, 
-    opt_kfolds=1, opt_cycles=2, split_seed=None, shuffle=True, optimizer='ga', 
-    opt_seed=None, ga_bounds=(1e-09, 1e3), logscale=False, ga_workers=1, polish=True, 
-    return_mse=False, verbose=False):
+def conditioning_jointly_optimal_bw(
+    data, cond_cols, qoi_col, split_frac=0.1, split_seed=None, optimizer='ga', 
+    opt_seed=None, ga_bounds=(1e-09, 1e3), ga_workers=-1, polish=True, 
+    return_mse=False, kfolds=5, logscale=False, shuffle=True,
+    print_precision=4, verbose=False):
     
     data = np.atleast_2d(np.array(np.squeeze([data])))
     N, n = data.shape
     
     if qoi_col == None:
-        qoi_col = np.atleast_1d(n)
+        qoi_col = np.atleast_1d(n-1)
     if cond_cols == None:
         qoi_col = np.atleast_1d(qoi_col)
         cond_cols = np.array([i for i in range(n) if i not in qoi_col])
@@ -2906,25 +2996,99 @@ def conditioning_marginally_optimal_bw(
     if split_seed is not None:
         shuffle = True
     
-    # if split_seed is not None:
-        # model_data, train_data = train_test_split(data, test_size=split_frac, 
-                                                  # random_state=split_seed, 
-                                                  # shuffle=True)
-    # else:
-        # model_data, train_data = train_test_split(data, test_size=split_frac, 
-                                                  # random_state=None, 
-                                                  # shuffle=False)
+    h_opt_k = []
+    mse_opt_k = []
     
-    # X_train = train_data[:, :-1]
-    # y_train = train_data[:, -1]
+    if verbose:
+        print("OPTIMIZING BANDWIDTHS JOINTLY\n\n")
     
-    # fitness_args = (X_train, y_train, model_data)
-    # bounds = [ga_bounds for i in range(len(cond_cols))]
-    # if verbose:
-        # print("Finding optimal bandwidth")
-    # result = differential_evolution(_fitness, bounds, args=fitness_args, 
-                                    # seed=opt_seed, workers=ga_workers, 
-                                    # polish=polish)
+    start = _short_date()
+    
+    for k in range(kfolds):
+        if verbose:
+            print(f"Fold {k+1}/{kfolds}\n")
+        seed = split_seed
+        if split_seed is not None:
+            seed = k + split_seed
+        model_data, train_data = train_test_split(
+            data, test_size=split_frac, random_state=split_seed, shuffle=shuffle)
+        X_train = train_data[:, :-1]
+        y_train = train_data[:, -1]
+    
+        fitness_args = (X_train, y_train, model_data, logscale)
+        if logscale:
+                bounds = [(np.log(ga_bounds[0]), np.log(ga_bounds[1])) for i in range(len(cond_cols))]
+        else:
+            bounds = [ga_bounds for i in range(len(cond_cols))]
+        
+        if ga_workers != 1:
+            updating='deferred'
+        else:
+            updating='immediate'
+        result = differential_evolution(_fitness, bounds, args=fitness_args, 
+                                        seed=opt_seed, workers=ga_workers, 
+                                        polish=polish, updating=updating)
+        
+        values = np.exp(result.x).tolist() if logscale else result.x
+    
+        if verbose:
+            # formatted_values = ", ".join([f'{x:.{print_precision}e}' for x in values])
+            # formatted_values = ", ".join([f'{x:.{print_precision}f}' for x in values])
+            formatted_values = ", ".join([f'{x:.{print_precision}f}e{_normalize_values(values)[1]}' for x in _normalize_values(values)[0]])
+            print(f"Optimal bandwidths H = [{formatted_values}]")
+
+            if result.fun > 1e-2:
+                print(f"MSE = {result.fun:.{print_precision}f}")
+            else:
+                print(f"MSE = {result.fun:.{print_precision}e}")
+            print("\n*************************************************\n")
+        
+        h_opt_k.append(values)
+        mse_opt_k.append(result.fun)
+        
+    h_opt = np.array(h_opt_k).mean(axis=0)
+    mse_opt = np.array(mse_opt_k).mean(axis=0)
+    
+    if verbose:
+        formatted_h_opt = ", ".join([f'{x:.{print_precision}e}' for x in h_opt])
+        formatted_h_opt = ", ".join([f'{x:.{print_precision}f}' for x in h_opt])
+        formatted_h_opt = ", ".join([f'{x:.{print_precision}f}e{_normalize_values(h_opt)[1]}' for x in _normalize_values(h_opt)[0]])
+        print(f"\nFinal bandwidth H = [{formatted_h_opt}]")
+
+        if mse_opt > 1e-2:
+            print(f"Final MSE = {mse_opt:.{print_precision}f}")
+        else:
+            print(f"Final MSE = {mse_opt:.{print_precision}e}")
+        print(f"\nTime elapsed = {_short_date() - start}")
+        
+    return h_opt, mse_opt if return_mse else h_opt
+
+###############################################################################
+def conditioning_marginally_optimal_bw(
+    data, cond_cols=None, qoi_col=None, split_frac=0.1, ranking_kfolds=1, 
+    opt_kfolds=1, opt_cycles=2, split_seed=None, shuffle=True, optimizer='ga', 
+    opt_seed=None, ga_bounds=(1e-09, 1e3), logscale=False, ga_workers=1, polish=True, 
+    return_mse=False, verbose=False):
+    
+    data = np.atleast_2d(np.array(np.squeeze([data])))
+    N, n = data.shape
+    
+    if qoi_col == None:
+        qoi_col = np.atleast_1d(n-1)
+    if cond_cols == None:
+        qoi_col = np.atleast_1d(qoi_col)
+        cond_cols = np.array([i for i in range(n) if i not in qoi_col])
+    
+    qoi_col = np.atleast_1d(qoi_col)
+    if qoi_col.shape[0] > 1:
+        raise ValueError("Optimal bandwidth can be found for single QoI only.")
+    
+    xy_idx = np.hstack((np.atleast_1d(cond_cols), np.atleast_1d(qoi_col)))
+    
+    data = data[:, xy_idx]
+    
+    if split_seed is not None:
+        shuffle = True
     
     h_opt_full_k = []
     mse_opt_full_k = []
@@ -2972,7 +3136,7 @@ def conditioning_marginally_optimal_bw(
         mse_opt_full_k.append(mse_opt_full)
         
         if verbose:
-            print("******************\n")
+            print("*************************************************\n")
 
     h_opt_full_k = np.array(h_opt_full_k).mean(axis=0)
     mse_opt_full_k = np.array(mse_opt_full_k).mean(axis=0)
@@ -2988,13 +3152,13 @@ def conditioning_marginally_optimal_bw(
     sorted_h_mse = h_mse[ind]
     cond_cols_sorted_idx = sorted_h_mse[:, 0].astype(int).tolist()
     if verbose:
-            print("\n*******************************************\n")
+            print("\n******************************************************\n")
 
 
     #-# optimizing ranked bandwidths
     
     if verbose:
-        print('\n\n\nOPTIMIZING RANKED BANDWIDTHS SEQUENTIALLY\n')
+        print('\n\n\nOPTIMIZING RANKED BANDWIDTHS SEQUENTIALLY\n\n')
     # h_opt = sorted_h_mse[:, 1]
     if logscale:
         h_opt = np.ones_like(cond_cols_sorted_idx) * np.log(ga_bounds[1])
@@ -3025,12 +3189,13 @@ def conditioning_marginally_optimal_bw(
             if verbose:
                 print(f"{counter}/{total_runs}\nOptimizing bandwidth for variable {cond_cols_sorted_idx[i]} ({i+1}/{len(cond_cols)}), Cycle {i_ // len(cond_cols)+1}/{opt_cycles}, fold = {k+1}/{opt_kfolds}:")
             
-            fitness_args = (X_train, y_train, model_data, logscale, h_opt, cond_col_idx)
+            fitness_args = (X_train, y_train, model_data, logscale, np.copy(h_opt), cond_col_idx)
             
             if logscale:
                 bounds = [(np.log(ga_bounds[0]), np.log(ga_bounds[1]))]
             else:
                 bounds = [ga_bounds]
+            
             result = differential_evolution(_fitness, bounds, args=fitness_args, seed=opt_seed, workers=ga_workers, polish=polish, strategy='randtobest1bin')
             
             h_opt_updated = np.copy(h_opt)
@@ -3039,7 +3204,7 @@ def conditioning_marginally_optimal_bw(
             mse_opt = [result.fun]
             mse_opt_k.append(mse_opt)
             if verbose:
-                print(f"H =", np.exp(h_opt) if logscale else np.array(h_opt))
+                print(f"H =", np.exp(h_opt_updated) if logscale else np.array(h_opt_updated))
                 print("MSE =", round(mse_opt[0], 6), "\n")
         h_opt_k = np.array(h_opt_k).mean(axis=0)
         h_opt = h_opt_k
@@ -3048,13 +3213,17 @@ def conditioning_marginally_optimal_bw(
         if verbose:
             print("Average fold H =", np.exp(h_opt) if logscale else np.array(h_opt))
             print("Average fold MSE =", round(mse_opt, 6))
-            print("\n******************\n")
+            print("\n*************************************************\n")
 
     h_opt_final = h_opt
     mse_opt_final = mse_opt
     
     h_opt_final = np.exp(h_opt_final) if logscale else np.array(h_opt_final)
     h_opt_final = h_opt_final.reshape(-1,)
+    
+    if verbose:
+        print("\nFinal bandwidth H =", h_opt_final)
+        print("\nFinal MSE =", mse_opt_final)
     
     return h_opt_final, mse_opt_final
     
