@@ -2842,7 +2842,39 @@ def conditional_expectation(obj, qoi_cols, cond_cols, cond_vals, weights=None,
 ###############################################################################
 def _get_conditional_weights(W, w0, sw=None, nq=1, parallel=False, batches=2,
                               verbose=True):
+    """
+    Calculate the conditional weights based on the provided conditioning variables.
 
+    This function computes weights for the conditioning variables, which are used in estimating
+    the conditional expectation. The weights are determined based on the distance of each sample
+    from the specified conditioning value `w0`, adjusted by a specified bandwidth.
+
+    :param W: (np.ndarray) 
+        A 2D NumPy array where each row represents a sample and each column represents a conditioning variable. 
+        If a 1D array is provided, it will be reshaped into a 2D array with one column.
+
+    :param w0: (np.ndarray) 
+        A 1D array representing the conditioning values against which the weights are computed.
+
+    :param sw: (float, optional) 
+        The bandwidth for the weights. If `None`, it will be computed based on the number of samples and variables.
+
+    :param nq: (int, optional) 
+        The number of quantities of interest (QoIs). Default is 1.
+
+    :param parallel: (bool, optional) 
+        If `True`, the computation of norms will be executed in parallel across batches for efficiency.
+
+    :param batches: (int, optional) 
+        The number of batches to split the data into when parallel computation is enabled. Default is 2.
+
+    :param verbose: (bool, optional) 
+        If `True`, the function will print verbose output during execution.
+
+    :return: (np.ndarray) 
+        A normalized array of conditional weights corresponding to the samples in `W`.
+    """
+    
     if W.ndim == 1:
         W = W[:, np.newaxis]
     Nsim, nw = W.shape
@@ -2902,28 +2934,41 @@ def _evaluate_kernels_sum(X, x, H, kernel_weights=None):
 ###############################################################################
 def forward_model(x, data, qoi_col=None, cond_cols=None, h=None):
     """
-    ...
+    Predict the quantity of interest (QoI) based on input variables using a conditional expectation approach.
+
+    This function estimates the expected value of the QoI for given input values by computing
+    the conditional expectation of the QoI given the specified conditioning features from the data.
 
     Parameters
     ----------
-    x: ...
-        Values of the input variables for which y is predicted
-    
-    data: ndarray of shape (n_samples, n_features)
-        Dataset used to estimate the 'n_features'-dimensional joint PDF.
+    x: array-like, shape (n_samples, n_features)
+        Values of the input variables for which the QoI is predicted.
 
-    qoi_col: int
-        index of the quantity of interest (model output)
-    
-    cond_cols: List of int or None, optional (default is None)
-        Predefined list of indices of conditional features to rank.
-        If None, assume it is all features except the 
-        one specified by qoi_col:
-        cond_cols = [i for i in range(n_features) if i not in qoi_col]
+    data: ndarray, shape (n_samples, n_features)
+        Dataset used to estimate the 'n_features'-dimensional joint probability density function (PDF).
 
-    
+    qoi_col: int, optional
+        Index of the quantity of interest (model output) within the features. If not specified, it defaults to the last column.
 
+    cond_cols: list of int, optional
+        Predefined list of indices of conditional features to rank. If None (default), assumes all features except the one specified by `qoi_col`:
+        cond_cols = [i for i in range(n_features) if i != qoi_col].
+
+    h: float or array-like, optional
+        Bandwidth(s) to be used in the conditional expectation computation. Must be non-negative.
+
+    Returns
+    -------
+    y_pred: array-like or float
+        The predicted values of the QoI based on the input values. If multiple predictions are made, returns an array; 
+        if a single prediction is made, returns a float.
+
+    Raises
+    ------
+    ValueError
+        If any bandwidth(s) are negative or if there is a dimension mismatch between `cond_cols` and `x`.
     """
+    
     if np.min(h) < 0:
         raise ValueError('Bandwidth(s) must be nonnegative.')
     
@@ -2933,9 +2978,9 @@ def forward_model(x, data, qoi_col=None, cond_cols=None, h=None):
     if N_x == 1 and n_x > 1:
         x = x.T
     
-    if qoi_col == None:
+    if qoi_col is None:
         qoi_col = np.atleast_1d(n_x)
-    if cond_cols == None:
+    if cond_cols is None:
         qoi_col = np.atleast_1d(qoi_col)
         cond_cols = np.array([i for i in range(n_x) if i not in qoi_col])
     
@@ -2979,9 +3024,9 @@ def conditioning_jointly_optimal_bw(
     data = np.atleast_2d(np.array(np.squeeze([data])))
     N, n = data.shape
     
-    if qoi_col == None:
+    if qoi_col is None:
         qoi_col = np.atleast_1d(n-1)
-    if cond_cols == None:
+    if cond_cols is None:
         qoi_col = np.atleast_1d(qoi_col)
         cond_cols = np.array([i for i in range(n) if i not in qoi_col])
     
@@ -3073,9 +3118,9 @@ def conditioning_marginally_optimal_bw(
     data = np.atleast_2d(np.array(np.squeeze([data])))
     N, n = data.shape
     
-    if qoi_col == None:
+    if qoi_col is None:
         qoi_col = np.atleast_1d(n-1)
-    if cond_cols == None:
+    if cond_cols is None:
         qoi_col = np.atleast_1d(qoi_col)
         cond_cols = np.array([i for i in range(n) if i not in qoi_col])
     
@@ -3230,6 +3275,46 @@ def conditioning_marginally_optimal_bw(
 ###############################################################################
 def conditioning_silverman_bw(data, cond_cols, qoi_col, return_mse=False, 
                               split_frac=0.1, split_seed=None):
+    """
+    Computes the Silverman's bandwidth for the given data and conditional variables,
+    optionally returning the mean squared error (MSE) based on a train-test split.
+
+    This function estimates the bandwidth for a kernel density estimation 
+    using Silverman's rule of thumb. If requested, it will also compute the MSE 
+    by training a model on a subset of the data.
+
+    Parameters
+    ----------
+    data: ndarray of shape (n_samples, n_features)
+        The dataset used for bandwidth estimation and MSE calculation, where 
+        n_samples is the number of data points and n_features is the number of features.
+
+    cond_cols: int or array-like
+        Indices of the conditional columns to consider for bandwidth estimation.
+
+    qoi_col: int or array-like
+        Index of the quantity of interest (model output) column.
+
+    return_mse: bool, optional (default=False)
+        If True, the function will return the mean squared error along with the bandwidth.
+
+    split_frac: float, optional (default=0.1)
+        Fraction of the data to use for testing when calculating MSE, must be between 0.0 and 1.0.
+
+    split_seed: int, optional
+        Seed for the random number generator used for splitting the data into training and testing sets.
+        This ensures reproducibility of the split when specified.
+
+    Returns
+    -------
+    h: float
+        The computed Silverman's bandwidth.
+
+    mse: float, optional
+        The mean squared error of the model trained on the training data, 
+        returned only if `return_mse` is True.
+    """
+    
     Nsim = data.shape[0]
     nw = len(np.atleast_1d(cond_cols))
     nq = len(np.atleast_1d(qoi_col))
@@ -3255,18 +3340,36 @@ def conditioning_silverman_bw(data, cond_cols, qoi_col, return_mse=False,
 ###############################################################################
 def train_test_split(data, test_size=0.1, random_state=None, shuffle=True):
     """
-    Splits the dataset into train and test sets based on the specified test size.
-    
-    Parameters:
-    - data: The dataset to split (NumPy array or pandas DataFrame).
-    - test_size: Proportion of the dataset to include in the test split (between 0.0 and 1.0).
-    - random_state: Controls the shuffling applied to the data before splitting. Pass an int for reproducible results.
-    - shuffle: Whether or not to shuffle the data before splitting.
+    Splits the dataset into training and testing subsets based on the specified test size.
 
-    Returns:
-    - train_data: The training subset of the data.
-    - test_data: The testing subset of the data.
+    This function randomly divides the input dataset into two parts: a training set and a testing set.
+    The training set is used to train machine learning models, while the testing set is used for evaluating their performance.
+
+    Parameters
+    ----------
+    data: array-like or pandas DataFrame
+        The dataset to split, which can be either a NumPy array or a pandas DataFrame.
+
+    test_size: float, optional (default=0.1)
+        Proportion of the dataset to include in the test split, should be between 0.0 and 1.0.
+        For example, if 0.2 is passed, it will allocate 20% of the data to the test set.
+
+    random_state: int, optional
+        Controls the shuffling applied to the data before splitting. 
+        Pass an integer to ensure reproducibility of the split across multiple runs.
+
+    shuffle: bool, optional (default=True)
+        Whether or not to shuffle the data before splitting. If set to False, the data will be split in its original order.
+
+    Returns
+    -------
+    train_data: array-like or pandas DataFrame
+        The training subset of the data.
+
+    test_data: array-like or pandas DataFrame
+        The testing subset of the data.
     """
+    
     # Set the random seed for reproducibility
     if random_state is not None:
         np.random.seed(random_state)
@@ -3292,8 +3395,9 @@ def train_test_split(data, test_size=0.1, random_state=None, shuffle=True):
     return train_data, test_data
 
 ###############################################################################
-def _conditional_pdf(X, qoi_cols, cond_cols, cond_vals, weights=None, grid=None, sw=None, 
-                     sq=None, pdf_Npts=200, parallel=True, verbose=True):
+def _conditional_pdf(X, qoi_cols, cond_cols, cond_vals, weights=None, grid=None,
+                     sw=None, bw_opt_kwargs={}, sq=None, pdf_Npts=200, 
+                     parallel=True, verbose=True):
     
     start = _short_date()
     if verbose:
@@ -3313,17 +3417,28 @@ distribution of <variable{"" if nq==1 else "s"} {qoi_cols}> conditioned on \
     
     ## Conditioning weights
     if weights is None:
-        if sw == "optimal":
+        if type(sw) is str and sw.startswith("optimal"):
             if nq > 1:
                 print("Optimal bandwidth can be found for single QoI only. Using Silverman's bandwidth instead.")
                 sw = None
             else:
                 if verbose:
                     print("\nFinding optimal bandwidth for conditioning.")
-                sw = _conditioning_optimal_bw(X, cond_cols, qoi_col)
-                if verbose:
-                    print(f"\nOptimal bandwidth = {sw}")
+                if sw == "optimal_joint":
+                    sw = conditioning_jointly_optimal_bw(
+                        data, cond_cols, qoi_cols, verbose=verbose,
+                        **bw_opt_kwargs)
+                elif sw == "optimal_marg":
+                    sw = conditioning_marginally_optimal_bw(
+                        data, cond_cols, qoi_cols, verbose=verbose,
+                        **bw_opt_kwargs)
+                else:
+                    if verbose:
+                        print("Invalid option for bandwidth. Using Silverman's bandwidth.")
+                    sw = None
         if sw is None:
+            if verbose:
+                print("Using Silverman's bandwidth.")
             sw = (4 / (Nsim*(2+nw+nq))) ** (1/(4+nw+nq))
         if verbose:
             print("\nComputing conditioning weights.")
