@@ -3071,6 +3071,103 @@ def conditioning_jointly_optimal_bw(
     opt_seed=None, ga_bounds=(1e-09, 1e3), ga_workers=-1, polish=True, 
     return_mse=False, kfolds=5, logscale=False, shuffle=True,
     print_precision=4, verbose=False):
+    """
+    Jointly optimizes the bandwidths for conditional features in kernel density 
+    estimation using a genetic algorithm or differential evolution.
+
+    This function computes the optimal bandwidths for conditioning variables in 
+    a conditional probability density estimation framework. The bandwidths are 
+    optimized using cross-validation and the differential evolution algorithm, 
+    with options for specifying search bounds, logging, and adjusting for log-scale.
+
+    Parameters
+    ----------
+    data : ndarray of shape (n_samples, n_features)
+        The input dataset containing both the conditioning variables and the 
+        quantity of interest (QoI).
+    
+    cond_cols : list of int
+        Indices of the conditioning features (input variables) to optimize the 
+        bandwidth for.
+    
+    qoi_col : int or list of int
+        Index of the quantity of interest (model output). Only a single QoI is allowed.
+
+    split_frac : float, optional (default=0.1)
+        Fraction of the data used for the test split during cross-validation. 
+        Must be between 0 and 1.
+
+    split_seed : int or None, optional (default=None)
+        Seed for reproducibility of the training/testing split. If provided, 
+        the data will be shuffled accordingly.
+
+    optimizer : str, optional (default='ga')
+        The optimization method to use. Currently supports 'ga' (genetic algorithm).
+
+    opt_seed : int or None, optional (default=None)
+        Random seed for the optimizer to ensure reproducibility.
+
+    ga_bounds : tuple, optional (default=(1e-09, 1e3))
+        Bounds for the genetic algorithm when searching for optimal bandwidths.
+
+    ga_workers : int, optional (default=-1)
+        Number of CPU cores to use for parallel optimization. Use -1 to utilize all available cores.
+
+    polish : bool, optional (default=True)
+        Whether to perform a local search after the genetic algorithm has converged.
+
+    return_mse : bool, optional (default=False)
+        If True, the function will return both the optimal bandwidth and the mean squared error (MSE).
+
+    kfolds : int, optional (default=5)
+        Number of cross-validation folds to use for evaluating the fitness of bandwidths.
+
+    logscale : bool, optional (default=False)
+        If True, the bandwidths are optimized in log-scale and converted back via exponentiation.
+
+    shuffle : bool, optional (default=True)
+        Whether to shuffle the dataset before performing the train-test split for cross-validation.
+
+    print_precision : int, optional (default=4)
+        Number of decimal places to use when printing bandwidth values during optimization.
+
+    verbose : bool, optional (default=False)
+        If True, prints detailed progress, including bandwidth values and mean squared error, during optimization.
+
+    Returns
+    -------
+    h_opt : ndarray
+        The optimized bandwidth values for the conditioning variables.
+
+    mse_opt : float, optional
+        The mean squared error of the model using the optimized bandwidths, 
+        returned if `return_mse` is True.
+
+    Raises
+    ------
+    ValueError
+        If more than one QoI is provided in `qoi_col`, as the function supports 
+        optimization for a single QoI only.
+
+    Notes
+    -----
+    - The function performs k-fold cross-validation, where in each fold the dataset 
+      is split into training and testing sets based on `split_frac`. The optimal 
+      bandwidths are found by minimizing the MSE between predicted and actual outputs.
+    
+    - The `differential_evolution` optimizer is used for finding optimal bandwidths. 
+      The search bounds and the log-scale option can significantly affect the results.
+
+    - If `verbose` is set to True, detailed output about the optimization process 
+      is printed for each fold.
+
+    Example
+    -------
+    >>> data = np.random.randn(100, 5)
+    >>> cond_cols = [0, 1, 2]
+    >>> qoi_col = 4
+    >>> h_opt, mse_opt = conditioning_jointly_optimal_bw(data, cond_cols, qoi_col, return_mse=True)
+    """
     
     data = np.atleast_2d(np.array(np.squeeze([data])))
     N, n = data.shape
@@ -3165,6 +3262,111 @@ def conditioning_marginally_optimal_bw(
     opt_kfolds=1, opt_cycles=2, split_seed=None, shuffle=True, optimizer='ga', 
     opt_seed=None, ga_bounds=(1e-09, 1e3), logscale=False, ga_workers=1, polish=True, 
     return_mse=False, verbose=False):
+    """
+    Optimizes marginal bandwidths for conditional probability density estimation
+    using cross-validation and differential evolution.
+
+    This function performs a two-stage optimization process to first rank conditional
+    bandwidths and then optimize them sequentially. It supports k-fold cross-validation
+    for both ranking and optimizing the bandwidths and can shuffle the data for
+    randomness in the training-test splitting.
+
+    Parameters
+    ----------
+    data : np.array
+        2D array of input data. Rows represent observations, and columns represent
+        features, including conditional variables and the QoI.
+    cond_cols : list, optional
+        List of column indices in `data` corresponding to the conditional variables.
+        If `None`, all columns except the QoI are used.
+    qoi_col : int, optional
+        Index of the column in `data` representing the QoI. If `None`, the last
+        column is used as the QoI.
+    split_frac : float, optional
+        Fraction of the data to use as the test set during each fold of cross-validation.
+        Default is 0.1.
+    ranking_kfolds : int, optional
+        Number of k-fold cross-validation splits for ranking bandwidths. Default is 1.
+    opt_kfolds : int, optional
+        Number of k-fold cross-validation splits for optimizing bandwidths. Default is 1.
+    opt_cycles : int, optional
+        Number of optimization cycles to refine the bandwidths. Default is 2.
+    split_seed : int, optional
+        Random seed for shuffling the data during train-test splitting. Default is `None`.
+    shuffle : bool, optional
+        Whether to shuffle the data before splitting into training and test sets.
+        Default is True.
+    optimizer : str, optional
+        Optimization algorithm to use. Default is `'ga'` (genetic algorithm via
+        `differential_evolution`).
+    opt_seed : int, optional
+        Random seed for the optimizer. Default is `None`.
+    ga_bounds : tuple, optional
+        Bounds for the bandwidth search space during optimization. Default is (1e-09, 1e3).
+    logscale : bool, optional
+        If True, perform optimization in log-space for the bandwidths. Default is False.
+    ga_workers : int, optional
+        Number of parallel workers for the optimizer. Default is 1.
+    polish : bool, optional
+        If True, polish the final result of `differential_evolution` for more refined solutions.
+        Default is True.
+    return_mse : bool, optional
+        If True, return the mean squared error (MSE) along with the optimized bandwidths.
+        Default is False.
+    verbose : bool, optional
+        If True, prints detailed logs during the optimization process. Default is False.
+
+    Returns
+    -------
+    h_opt_final : np.array
+        The final optimized bandwidths for the conditional variables.
+    mse_opt_final : float, optional
+        The final mean squared error (MSE) after bandwidth optimization. This is returned 
+        only if `return_mse` is set to True.
+
+    Raises
+    ------
+    ValueError
+        If more than one QoI is provided.
+
+    Notes
+    -----
+    - The function assumes that only one QoI (Quantity of Interest) is provided. If
+      multiple QoIs are passed, it raises a ValueError.
+    - The optimization process is performed sequentially, which helps in optimizing
+      bandwidths more efficiently for a large number of conditional variables.
+    - Cross-validation and data shuffling are used to ensure that the results are
+      generalizable and robust.
+    
+    Workflow
+    --------
+    1. Data Preprocessing:
+       - The input data is converted to a 2D array, and if no QoI is specified, the last column
+         is used as the QoI. The remaining columns are used as conditional variables.
+    
+    2. Bandwidth Ranking (K-Fold Cross-Validation):
+       - For each ranking fold, the data is split into training and model datasets.
+       - For each conditional variable, bandwidth is optimized using the training set, and the
+         corresponding MSE is calculated. This step ranks the variables based on their influence.
+    
+    3. Sequential Bandwidth Optimization:
+       - After ranking, the bandwidths are optimized sequentially in multiple cycles and k-folds.
+       - During each cycle, each conditional variable’s bandwidth is optimized while keeping others
+         fixed. The process repeats for a specified number of optimization cycles.
+    
+    4. Results:
+       - The final optimized bandwidths are returned, optionally with the final MSE, after averaging
+         across k-folds and optimization cycles.
+
+    Example
+    -------
+    >>> # Example data: 100 samples with 3 conditional variables and 1 QoI
+    >>> data = np.random.randn(100, 4)
+    >>> # Run the marginal bandwidth optimization with default settings
+    >>> h_opt, mse_opt = conditioning_marginally_optimal_bw(data, return_mse=True, verbose=True)
+    >>> print("Optimized Bandwidths:", h_opt)
+    >>> print("Final MSE:", mse_opt)
+    """
     
     data = np.atleast_2d(np.array(np.squeeze([data])))
     N, n = data.shape
@@ -3477,11 +3679,11 @@ distribution of <variable{"" if nq==1 else "s"} {qoi_cols}> conditioned on \
                     print("\nFinding optimal bandwidth for conditioning.")
                 if sw == "optimal_joint":
                     sw = conditioning_jointly_optimal_bw(
-                        data, cond_cols, qoi_cols, verbose=verbose,
+                        X, cond_cols, qoi_cols, verbose=verbose,
                         **bw_opt_kwargs)
                 elif sw == "optimal_marg":
                     sw = conditioning_marginally_optimal_bw(
-                        data, cond_cols, qoi_cols, verbose=verbose,
+                        X, cond_cols, qoi_cols, verbose=verbose,
                         **bw_opt_kwargs)
                 else:
                     if verbose:
@@ -3607,71 +3809,25 @@ Silverman\'s rule of thumb.')
     return np.array(result)
 
 ###############################################################################
-def conditional_pdf(obj, qoi_cols, cond_cols, cond_vals, weights=None, grid=None, sw=None, 
-                    sq=None, pdf_Npts=200, parallel=True, verbose=True): 
+def conditional_pdf(obj, qoi_cols, cond_cols, cond_vals, weights=None, grid=None, 
+                    sw=None, bw_opt_kwargs={}, sq=None, pdf_Npts=200, 
+                    parallel=True, verbose=True):
+    
+    args = {'qoi_cols': qoi_cols, 'cond_cols': cond_cols, 'cond_vals': cond_vals,
+            'weights': weights, 'grid': grid, 'sw': sw, 'bw_opt_kwargs': bw_opt_kwargs, 
+            'sq': sq, 'pdf_Npts': pdf_Npts, 'parallel': parallel, 'verbose': verbose}
+    
     if isinstance(obj, dict):
-        pdf = _conditional_pdf(obj['data']['augmented'], qoi_cols, cond_cols, 
-                               cond_vals, weights, grid, sw, sq, pdf_Npts, parallel, 
-                               verbose)
+        data = obj['data']['augmented']
+    elif isinstance(obj, np.ndarray):
+        data = obj
     else:
-        pdf = _conditional_pdf(obj, qoi_cols, cond_cols, cond_vals, weights, grid, sw, 
-                               sq, pdf_Npts, parallel, verbose)
+        raise ValueError("Invalid type for 'obj'. Expected dict or np.ndarray.")
+    
+    if isinstance(obj, dict):
+        pdf = _conditional_pdf(data, **args)
+    else:
+        pdf = _conditional_pdf(data, **args)
     return pdf
 
 ###############################################################################
-def _optimize(data,
-              ojective_col, objective_function=lambda q: q, fitness_type='expectation', fitness_arg=None):
-    """
-    Optimize...
-    
-    Parameters
-    ----------
-    data : ndarray of shape (n_samples, n_features)
-        Dataset used to calculate statistics of fitness and constraints 
-        variables.
-    
-    ojective_col : int
-        Index of column (feature) to be minimized (directly or through the 
-        function 'objective_function').
-    
-    objective_function : lambda function
-        Function that maps the feature specified by 'ojective_col' to a new 
-        quantity to be minimized. By default, the feature itself will be 
-        minimized.
-    
-    fitness_type : string, optional (default is 'expectation')
-        The type of statistic used for fitness calculation of 
-        'objective_function(ojective_col)' conditioned on the input parameters 
-        candidate. This statistic is calculated from the conditional PDF.
-        If 'expectation', the mean is use.
-        If 'percentile', the percentile specified by 'fitness_arg' is used.
-        If 'cdf', the CDF at 'fitness_arg' is used.
-    
-    fitness_arg : float, optional (default is None)
-        Value to be used for fitness calculation if 'fitness_type' requires it.
-    
-    
-    
-    
-    """
-    
-    q_idx = ojective_col
-    q     = objective_function(data[:, q_idx])
-    
-    def fitness(w):
-        global weights
-        weights = _get_conditional_weights(data[:, cond_cols], cond_vals, sw,
-                                           verbose=False)
-    
-    
-    
-    
-    
-    return 0
-    
-    
-    
-    
-    
-    
-#plom.show_options()
