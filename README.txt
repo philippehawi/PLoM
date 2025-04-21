@@ -1,5 +1,5 @@
 Original PLoM algorithm
 
-C++ lib: No
+C++ lib: Yes
 
 Variance constraints: No

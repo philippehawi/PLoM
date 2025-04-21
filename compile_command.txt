@@ -1,0 +1,7 @@
+g++ -shared -o get_L.so -fPIC get_L.cpp -O3 -march=native -flto -funroll-loops
+
+g++ -shared -o get_L.so -fPIC get_L.cpp -O3 -march=native -flto -funroll-loops -static-libgcc -static-libstdc++ -Wl,-Bstatic -Wl,-Bdynamic
+
+g++ -shared -o get_L.so -fPIC get_L.cpp -O3 -mtune=generic -flto -funroll-loops -static-libgcc -static-libstdc++ -Wl,-Bstatic -Wl,-Bdynamic
+
+g++ -shared -o get_L.dll get_L.cpp -static-libgcc -static-libstdc++

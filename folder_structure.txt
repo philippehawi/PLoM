@@ -1,0 +1,20 @@
+PLOM/
+├── plom/
+│   ├── __init__.py
+│   ├── plom.py
+│   ├── lib/
+│   │   ├── potential_eigen.dll
+│   │   ├── potential_native.dll
+│   │   ├── potential_eigen.so
+│   │   ├── potential_native.so
+│   ├── test_scripts/
+│   │   ├── check_potential_eigen.py
+│   │   ├── check_potential_native.py
+├── scripts/
+│   ├── input_template.txt
+│   ├── plom_make_input_template.py
+│   ├── plom_run.py
+├── LICENSE
+├── README.md
+├── requirements.txt
+├── setup.py  
