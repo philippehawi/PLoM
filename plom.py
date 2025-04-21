@@ -3879,31 +3879,34 @@ Silverman\'s rule of thumb.')
             result.append(_evaluate_kernels_sum(q, x, H, weights))
     
     if refine_grid:
-        result = np.array(result)
-        pdf_max = np.max(result[:, 1])
-        i_ = 0
-        for i in range(result.shape[0]):
-            if result[i, 1] > 0.000001*pdf_max:
-                xmin = result[i, 0]
-                break
-        for j in range(result.shape[0]-1, i, -1):
-            if result[j, 1] > 0.000001*pdf_max:
-                xmax = result[j, 0]
-                break
-        grid = np.linspace(xmin, xmax, pdf_Npts)
+        try:
+            result = np.array(result)
+            pdf_max = np.max(result[:, 1])
+            i_ = 0
+            for i in range(result.shape[0]):
+                if result[i, 1] > 0.000001*pdf_max:
+                    xmin = result[i, 0]
+                    break
+            for j in range(result.shape[0]-1, i, -1):
+                if result[j, 1] > 0.000001*pdf_max:
+                    xmax = result[j, 0]
+                    break
+            grid = np.linspace(xmin, xmax, pdf_Npts)
 
-        if parallel:
-            if verbose:
-                print(f'\nEvaluating KDE on {grid.shape[0]} points in parallel.')
-            result = Parallel(n_jobs=-1)(
-                delayed(_evaluate_kernels_sum)(q, grid[i], H, weights) 
-                for i in range(len(grid)))
-        else:
-            if verbose:
-                print(f'\nEvaluating KDE on {grid.shape[0]} points.')
-            result = []
-            for x in grid:
-                result.append(_evaluate_kernels_sum(q, x, H, weights))       
+            if parallel:
+                if verbose:
+                    print(f'\nEvaluating KDE on {grid.shape[0]} points in parallel.')
+                result = Parallel(n_jobs=-1)(
+                    delayed(_evaluate_kernels_sum)(q, grid[i], H, weights) 
+                    for i in range(len(grid)))
+            else:
+                if verbose:
+                    print(f'\nEvaluating KDE on {grid.shape[0]} points.')
+                result = []
+                for x in grid:
+                    result.append(_evaluate_kernels_sum(q, x, H, weights))   
+        except:
+            pass
 
 
     end = _short_date()
