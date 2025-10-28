@@ -1,2 +1,2 @@
 # Ignore C++ libraries from language stats
-cpp_lib/include/ linguist-vendored=true
+cpp_lib/include/** linguist-vendored=true
