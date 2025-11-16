@@ -51,6 +51,7 @@ def initialize(training=None,
                ito_dr=0.1,
                ito_steps='auto',
                ito_pot_method=3,
+               ito_M0=0,
                ito_kde_bw_factor=1,
                
                parallel=False,
@@ -92,6 +93,7 @@ def initialize(training=None,
     options_dict['projection_source'] = projection_source
     options_dict['projection_target'] = projection_target
     options_dict['ito_pot_method']    = ito_pot_method
+    options_dict['ito_M0']            = ito_M0
     options_dict['ito_kde_bw_factor'] = ito_kde_bw_factor
     options_dict['parallel']          = parallel
     options_dict['n_jobs']            = n_jobs
@@ -694,7 +696,7 @@ def sample_projection(plom_dict):
         H = plom_dict['pca']['training']
     elif projection_source == "scaling":
         H = plom_dict['scaling']['training']
-    elif projection_target == "data":
+    elif projection_source == "data":
         H = plom_dict['data']['training']
     
     if projection_target == "dmaps":
@@ -1874,7 +1876,7 @@ def _simulate_ito_step(Z, Y, H, basis, a, f0, dr, kde_bw_factor, pot_method):
 
 ###############################################################################
 def _sampling(Z0, H, basis, a, f0=1, dr=0.1, t='auto', num_samples=1, 
-              parallel=False, n_jobs=-1, kde_bw_factor=1, pot_method=1, 
+              parallel=False, n_jobs=-1, kde_bw_factor=1, pot_method=1, M0=0,
               verbose=True):
     """
     Calls the sampling function '_simulate_entire_ito' which evolves the ISDE 
@@ -1959,7 +1961,7 @@ def _sampling(Z0, H, basis, a, f0=1, dr=0.1, t='auto', num_samples=1,
         print(f"Projected data (Z) dimensions: {Z0.shape}")
     Zs, Zs_steps, t = _simulate_entire_ito(Z0, H, basis, a, f0, dr, t, 
                                            num_samples, parallel, n_jobs, 
-                                           kde_bw_factor, pot_method, verbose)
+                                           kde_bw_factor, pot_method, M0, verbose)
     
     return Zs, Zs_steps, t
 
@@ -2002,6 +2004,7 @@ def sampling(plom_dict):
     n_jobs        = plom_dict['options']['n_jobs']
     kde_bw_factor = plom_dict['options']['ito_kde_bw_factor']
     pot_method    = plom_dict['options']['ito_pot_method']
+    M0            = plom_dict['options']['ito_M0']
     verbose       = plom_dict['options']['verbose']
     Z             = plom_dict['ito']['Z0']
     a             = plom_dict['ito']['a']
@@ -2009,7 +2012,7 @@ def sampling(plom_dict):
     # X = np.copy(np.transpose(X))
     Zs, Zs_steps, t = _sampling(Z, X.T, basis, a, f0, dr, t, num_samples,
                                 parallel, n_jobs, kde_bw_factor, pot_method, 
-                                verbose)
+                                M0, verbose)
     
     plom_dict['ito']['Zs']          = Zs
     plom_dict['ito']['Zs_steps']    = Zs_steps
@@ -2226,7 +2229,8 @@ def run(plom_dict):
 
 ## Saving samples
     if saving_opt:
-        save_samples(plom_dict)
+        if sampling_opt and num_samples != 0:
+            save_samples(plom_dict)
         save_summary(plom_dict)
 
 ## End
@@ -2350,7 +2354,8 @@ def run_sampling(plom_dict):
 
 ## Saving samples
     if saving_opt:
-        save_samples(plom_dict)
+        if sampling_opt and num_samples != 0:
+            save_samples(plom_dict)
         save_summary(plom_dict)
 
 ## End
@@ -2446,7 +2451,7 @@ def plot2D_dmaps_basis(plom_dict, vecs=[1,2], size=9, pt_size=10):
     c = range(evecs.shape[1])
     plt.figure(figsize=(size, size))
     plt.scatter(evecs[0], evecs[1], s=pt_size, c=c)
-    plt.title(f'DMAPS basi vectors {vecs[0]} (x) vs {vecs[1]} (y)')
+    plt.title(f'DMAPS basis vectors {vecs[0]} (x) vs {vecs[1]} (y)')
     plt.show()
 
 ###############################################################################
