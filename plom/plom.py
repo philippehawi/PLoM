@@ -1266,264 +1266,185 @@ def _get_L(H, u, kde_bw_factor=1, method=2):
         )
     
     
-    elif method == 3: # default Python implementation
+    elif method == 3: # improved Python implementation
         nu, N = H.shape
-        s = (4 / (N*(2+nu))) ** (1/(nu+4))*kde_bw_factor
-        shat = s / np.sqrt(s**2 + (N-1)/N)
-        scaled_H = H * shat / s
-        
-        dist_mat_list = [(scaled_H.T - x).T for x in u.T]
-        
-        norms_list = np.exp((-1/(2*shat**2)) * np.array(list(map(\
-            lambda x: np.linalg.norm(x, axis=0)**2, dist_mat_list))))
-        
-        q_list = np.array(list(map(np.sum, norms_list))) / N
-        
-        product = np.array(list(map(np.dot, dist_mat_list, norms_list)))
-        
-        dq_list = product/shat**2/N
-        pot = (dq_list/q_list[:,None]).transpose()
     
-    
-    elif method == 4:
-        nu, N = H.shape
-        s = (4 / (N*(2+nu))) ** (1/(nu+4))*kde_bw_factor
-        shat = s / np.sqrt(s**2 + (N-1)/N)
-        scaled_H = H * shat / s
-        
-        dist_mat_list = np.asfortranarray(np.tile(scaled_H.T, (N, 1)) - 
-                        np.repeat(u.T, N, axis=0))
-        norms_list = np.exp((-1/(2*shat**2)) * 
-                     np.linalg.norm(dist_mat_list, axis=1)**2)
-        q_list = np.sum(np.reshape(norms_list, (N, N)), axis=1) / N
-        product = dist_mat_list * norms_list[:, None] / shat**2 / N
-        dq_list = np.sum(np.reshape(product, (N, N, -1)), axis=1)
-        pot = (dq_list / q_list[:,None]).T
-    
-    
-    elif method==5:
-        nu, N = H.shape
-        s = (4 / (N*(2+nu))) ** (1/(nu+4))*kde_bw_factor
-        shat = s / np.sqrt(s**2 + (N-1)/N)
-        scaled_H = H * shat / s
-        
-        dist_mat_list = list(map(lambda x: (scaled_H.T - x).T, u.T))
-        
-        norms_list = np.exp((-1/(2*shat**2)) * np.array(list(map(\
-            lambda x: np.linalg.norm(x, axis=0)**2, dist_mat_list))))
-        
-        q_list = np.array(list(map(np.sum, norms_list))) / N
-        
-        product = np.array(list(map(np.dot, dist_mat_list, norms_list)))
-        
-        dq_list = product/shat**2/N
-        pot = (dq_list/q_list[:,None]).transpose()
-    
-    
-    elif method == 6:    
-        nu, N = H.shape
-        s = (4 / (N*(2+nu))) ** (1/(nu+4))*kde_bw_factor
-        shat = s / np.sqrt(s**2 + (N-1)/N)
+        # --- 1. Bandwidth Calculation ---
+        s = (4 / (N * (2 + nu))) ** (1 / (nu + 4)) * kde_bw_factor
+        shat = s / np.sqrt(s**2 + (N - 1) / N)
         scaled_H = H * shat / s
 
-        dist_mat_list = list(map(lambda x: (scaled_H.T - x).T, u.T))
+        # --- 2. Efficient Distance Matrix Calculation ---
+        # We use the identity: ||a - b||^2 = ||a||^2 + ||b||^2 - 2<a, b>
+        # This keeps operations purely in 2D matrices rather than 3D tensors.
         
-        norms_list = np.exp((-1/(2*shat**2)) * \
-            (distance_matrix(scaled_H.T, u.T)**2).T) # N x N
+        # Sum of squares for each column vector in u and scaled_H
+        u_sq = np.sum(u**2, axis=0)          # Shape: (N,)
+        H_sq = np.sum(scaled_H**2, axis=0)   # Shape: (N,)
         
-        q_list = np.array(list(map(np.sum, norms_list))) / N
+        # Dot product between every pair (u_i, H_j)
+        # (N, nu) @ (nu, N) -> (N, N)
+        interaction = np.dot(u.T, scaled_H)
         
-        product = np.array(list(map(np.dot, dist_mat_list, norms_list)))
+        # Expand to distance matrix using broadcasting
+        # Shape: (N, N) where entry [i,j] is dist between u[:,i] and scaled_H[:,j]
+        sq_dists = u_sq[:, None] + H_sq[None, :] - 2 * interaction
         
-        dq_list = product/shat**2/N
-        pot = (dq_list/q_list[:,None]).transpose()
-    
-    
-    elif method == 7:    
-        nu, N = H.shape
-        s = (4 / (N*(2+nu))) ** (1/(nu+4))*kde_bw_factor
-        shat = s / np.sqrt(s**2 + (N-1)/N)
-        scaled_H = H * shat / s
+        # Numerical stability safeguard (distances can't be negative)
+        sq_dists = np.maximum(sq_dists, 0.0)
 
-        dist_mat_list = [(scaled_H.T - x).T for x in u.T]
+        # --- 3. Compute Weights and Potentials ---
+        # Gaussian kernel weights
+        weights = np.exp(-sq_dists / (2 * shat**2))
         
-        norms_list = np.exp((-1/(2*shat**2)) * \
-            (distance_matrix(scaled_H.T, u.T)**2).T) # N x N
+        # Sum of weights for each u_i (denominator)
+        sum_weights = np.sum(weights, axis=1)  # Shape: (N,)
         
-        q_list = np.array(list(map(np.sum, norms_list))) / N
+        # Weighted sum of scaled_H vectors (numerator part 1)
+        # (nu, N) @ (N, N).T -> (nu, N)
+        weighted_H = np.dot(scaled_H, weights.T)
         
-        product = np.array(list(map(np.dot, dist_mat_list, norms_list)))
+        # Calculate the mean shift vector: (weighted_mean - u)
+        # We handle the division by sum_weights efficiently via broadcasting
+        mean_shift = (weighted_H / sum_weights[None, :]) - u
         
-        dq_list = product/shat**2/N
-        pot = (dq_list/q_list[:,None]).transpose()
+        # Final scaling
+        pot = mean_shift / shat**2
+     
     
+    ##-## old Python implementation (medium efficiency)
+    # elif method == 3:
+        # nu, N = H.shape
+        # s = (4 / (N*(2+nu))) ** (1/(nu+4))*kde_bw_factor
+        # shat = s / np.sqrt(s**2 + (N-1)/N)
+        # scaled_H = H * shat / s
+        
+        # diffs = scaled_H[:, None, :] - u[:, :, None]    
+        
+        # sq_norms = np.sum(diffs**2, axis=0)
+        
+        # weights = np.exp(-sq_norms / (2 * shat**2))
+        
+        # weighted_sum = np.sum(diffs * weights[None, :, :], axis=2)
+        
+        # q_list = weights.sum(axis=1) / N
+        
+        # dq = weighted_sum / N / shat**2
+        
+        # pot = dq / q_list[None, :]
     
-    elif method == 8:    
-        nu, N = H.shape
-        s = (4 / (N*(2+nu))) ** (1/(nu+4))*kde_bw_factor
-        shat = s / np.sqrt(s**2 + (N-1)/N)
-        scaled_H = H * shat / s
-
-        dist_mat_list = list(map(lambda x: (scaled_H.T - x).T, u.T))
+    ##-## old Python implementation (inefficient)
+    # elif method == 3:
+        # nu, N = H.shape
+        # s = (4 / (N*(2+nu))) ** (1/(nu+4))*kde_bw_factor
+        # shat = s / np.sqrt(s**2 + (N-1)/N)
+        # scaled_H = H * shat / s
         
-        norms_list = np.exp(
-            (-1/(2*shat**2)) * 
-            np.array([np.linalg.norm(x, axis=0)**2 for x in dist_mat_list]))
+        # dist_mat_list = [(scaled_H.T - x).T for x in u.T]
         
-        q_list = np.array(list(map(np.sum, norms_list))) / N
+        # norms_list = np.exp((-1/(2*shat**2)) * np.array(list(map(\
+            # lambda x: np.linalg.norm(x, axis=0)**2, dist_mat_list))))
         
-        product = np.array(list(map(np.dot, dist_mat_list, norms_list)))
+        # q_list = np.array(list(map(np.sum, norms_list))) / N
         
-        dq_list = product/shat**2/N
-        pot = (dq_list/q_list[:,None]).transpose()
+        # product = np.array(list(map(np.dot, dist_mat_list, norms_list)))
+        
+        # dq_list = product/shat**2/N
+        # pot = (dq_list/q_list[:,None]).transpose()
     
+    ##-## EXPERIMENTAL: conditional (Nadaraya-Watson KDE) * marginal tanh approx.
+    # elif method == 12:
+        # H = H.T
+        # u = u.T
+        # nu, N = 1, H.shape[0]
+        # eta_th = H[:,0]
+        # eta_z = H[:,1]
+        # u_th = u[:,0]
+        # u_z = u[:,1]
+        # hz = (4 / (N*(2+nu))) ** (1/(nu+4)) * kde_bw_factor
+        # ht = (4 / (N*(2+nu))) ** (1/(nu+4)) * kde_bw_factor
+        # a = min(eta_th)
+        # b = max(eta_th)
+        # dd = 100
+        
+        # th_raw_dist = np.subtract.outer(u_th, eta_th)
+        # # numerator of w_i (each row in the matrix corresponds to one theta_l)
+        # th_dist = np.exp((-1/(2*ht**2)) * (th_raw_dist**2))
+        # # denom. of w_i (each number in the list corresponds to one theta_l)
+        # th_dist_tot = np.array(list(map(np.sum,th_dist)))
+        # q_th = (1/2/(b-a)) * (np.tanh(dd*(u_th-a)) - 
+                              # np.tanh(dd*(u_th-b))).reshape(N) # q(theta) (N,)
+        
+        # z_raw_dist = np.subtract.outer(u_z, eta_z)
+        # z_dist = np.exp((-1/(2*hz**2)) * (z_raw_dist**2))
+        # q_z = np.sum((1/np.sqrt(2*np.pi)/hz * z_dist * th_dist),
+                      # axis=1) / th_dist_tot # q(z|theta) (N,)
     
-    elif method == 9:    
-        nu, N = H.shape
-        s = (4 / (N*(2+nu))) ** (1/(nu+4))*kde_bw_factor
-        shat = s / np.sqrt(s**2 + (N-1)/N)
-        scaled_H = H * shat / s
-
-        dist_mat_list = [(scaled_H.T - x).T for x in u.T]
+        # q = q_z * q_th
         
-        norms_list = np.exp(
-            (-1/(2*shat**2)) * 
-            np.array([np.linalg.norm(x, axis=0)**2 for x in dist_mat_list]))
+        # dq_dz = np.sum((-1/np.sqrt(2*np.pi)/hz**3) * z_raw_dist * z_dist * 
+                        # th_dist, axis=1) / th_dist_tot * q_th
         
-        q_list = np.array(list(map(np.sum, norms_list))) / N
-        
-        product = np.array(list(map(np.dot, dist_mat_list, norms_list)))
-        
-        dq_list = product/shat**2/N
-        pot = (dq_list/q_list[:,None]).transpose()
-            
-    
-    elif method == 10:
-        nu, N = H.shape
-        s = (4 / (N*(2+nu))) ** (1/(nu+4))*kde_bw_factor
-        shat = s / np.sqrt(s**2 + (N-1)/N)
-        scaled_H = H * shat / s
-        
-        raw_dist = np.array([scaled_H.T - x for x in u.T])
-
-        exp_dist = np.exp((-1/(2*shat**2))*np.sum(raw_dist**2, axis=2))
-
-        q = 1/N * np.sum(exp_dist, axis=1)
-
-        dq = np.array([np.sum(raw_dist[:,:,i]*exp_dist, axis=1) 
-                        for i in range(nu)]) / shat**2 / N
-        pot = dq/q
-
-    
-    elif method == 11:
-        nu, N = H.shape
-        s = (4 / (N*(2+nu))) ** (1/(nu+4))*kde_bw_factor
-        shat = s / np.sqrt(s**2 + (N-1)/N)
-        scaled_H = H * shat / s
-        
-        raw_dist = [scaled_H.T - x for x in u.T]
-
-        exp_dist = np.exp((-1/(2*shat**2))*np.linalg.norm(raw_dist, axis=2)**2)
-
-        q = 1/N * np.sum(exp_dist, axis=1)
-
-        dq = [np.sum(np.array(raw_dist)[:,:,i]*exp_dist, axis=1) 
-                        for i in range(nu)]/shat**2/N
-        pot = dq/q
-    
-    
-    elif method == 12: # conditional (Nadaraya-Watson KDE) * marginal tanh approx.
-        H = H.T
-        u = u.T
-        nu, N = 1, H.shape[0]
-        eta_th = H[:,0]
-        eta_z = H[:,1]
-        u_th = u[:,0]
-        u_z = u[:,1]
-        hz = (4 / (N*(2+nu))) ** (1/(nu+4)) * kde_bw_factor
-        ht = (4 / (N*(2+nu))) ** (1/(nu+4)) * kde_bw_factor
-        a = min(eta_th)
-        b = max(eta_th)
-        dd = 100
-        
-        th_raw_dist = np.subtract.outer(u_th, eta_th)
-        # numerator of w_i (each row in the matrix corresponds to one theta_l)
-        th_dist = np.exp((-1/(2*ht**2)) * (th_raw_dist**2))
-        # denom. of w_i (each number in the list corresponds to one theta_l)
-        th_dist_tot = np.array(list(map(np.sum,th_dist)))
-        q_th = (1/2/(b-a)) * (np.tanh(dd*(u_th-a)) - 
-                              np.tanh(dd*(u_th-b))).reshape(N) # q(theta) (N,)
-        
-        z_raw_dist = np.subtract.outer(u_z, eta_z)
-        z_dist = np.exp((-1/(2*hz**2)) * (z_raw_dist**2))
-        q_z = np.sum((1/np.sqrt(2*np.pi)/hz * z_dist * th_dist),
-                      axis=1) / th_dist_tot # q(z|theta) (N,)
-    
-        q = q_z * q_th
-        
-        dq_dz = np.sum((-1/np.sqrt(2*np.pi)/hz**3) * z_raw_dist * z_dist * 
-                        th_dist, axis=1) / th_dist_tot * q_th
-        
-        dq_dt_1 = q_th
-        dq_dt_2 = q_z
-        dq_dt_3 = (dd/2/(b-a) / (np.cosh(dd*(u_th-a))**2) - 
-                    dd/2/(b-a) / (np.cosh(dd*(u_th-b))**2))
-        dq_dt_4 = (-1/np.sqrt(2*np.pi)/hz/ht**2 * 
-                    np.sum(z_dist * th_raw_dist * th_dist, axis=1) * 
-                    th_dist_tot - 
-                    (1/np.sqrt(2*np.pi)/hz) * np.sum(z_dist*th_dist, axis=1) * 
-                    (-1/ht**2)*np.sum(th_raw_dist*th_dist, axis=1)
-                    ) / th_dist_tot**2
-        dq_dt = dq_dt_4 * dq_dt_1 + dq_dt_2 * dq_dt_3    
+        # dq_dt_1 = q_th
+        # dq_dt_2 = q_z
+        # dq_dt_3 = (dd/2/(b-a) / (np.cosh(dd*(u_th-a))**2) - 
+                    # dd/2/(b-a) / (np.cosh(dd*(u_th-b))**2))
+        # dq_dt_4 = (-1/np.sqrt(2*np.pi)/hz/ht**2 * 
+                    # np.sum(z_dist * th_raw_dist * th_dist, axis=1) * 
+                    # th_dist_tot - 
+                    # (1/np.sqrt(2*np.pi)/hz) * np.sum(z_dist*th_dist, axis=1) * 
+                    # (-1/ht**2)*np.sum(th_raw_dist*th_dist, axis=1)
+                    # ) / th_dist_tot**2
+        # dq_dt = dq_dt_4 * dq_dt_1 + dq_dt_2 * dq_dt_3    
        
-        dq = np.array((dq_dt, dq_dz))
-        pot = dq/(q)
+        # dq = np.array((dq_dt, dq_dz))
+        # pot = dq/(q)
 
+    ##-## EXPERIMENTAL: conditional (Nadaraya-Watson KDE) * marginal KDE
+    # elif method == 13: 
+        # H = H.T
+        # u = u.T
+        # nu, N = 1, H.shape[0]
+        # eta_th = H[:,0]
+        # eta_z = H[:,1]
+        # u_th = u[:,0]
+        # u_z = u[:,1]
+        # hz = (4 / (N*(2+nu))) ** (1/(nu+4)) * kde_bw_factor
+        # ht = (4 / (N*(2+nu))) ** (1/(nu+4)) * kde_bw_factor
+        
+        # th_raw_dist = np.subtract.outer(u_th, eta_th)
+        # # numerator of w_i (each row in the matrix corresponds to one theta_l)
+        # th_dist = np.exp((-1/(2*ht**2)) * (th_raw_dist**2))
+        # # denom. of w_i (each number in the list corresponds to one theta_l)
+        # th_dist_tot = np.array(list(map(np.sum,th_dist)))
+        # # q(theta) (N,)
+        # q_th = (1/N/ht) * np.sum((1/np.sqrt(2*np.pi) * th_dist), axis=1)
+        
+        # z_raw_dist = np.subtract.outer(u_z, eta_z)
+        # z_dist = np.exp((-1/(2*hz**2)) * (z_raw_dist**2))
+        # # q(z|theta) (N,)
+        # q_z  = np.sum((1/np.sqrt(2*np.pi)/hz * z_dist * th_dist), 
+                      # axis=1) / th_dist_tot
     
-    elif method == 13: # conditional (Nadaraya-Watson KDE) * marginal KDE
-        H = H.T
-        u = u.T
-        nu, N = 1, H.shape[0]
-        eta_th = H[:,0]
-        eta_z = H[:,1]
-        u_th = u[:,0]
-        u_z = u[:,1]
-        hz = (4 / (N*(2+nu))) ** (1/(nu+4)) * kde_bw_factor
-        ht = (4 / (N*(2+nu))) ** (1/(nu+4)) * kde_bw_factor
+        # q = q_z * q_th
         
-        th_raw_dist = np.subtract.outer(u_th, eta_th)
-        # numerator of w_i (each row in the matrix corresponds to one theta_l)
-        th_dist = np.exp((-1/(2*ht**2)) * (th_raw_dist**2))
-        # denom. of w_i (each number in the list corresponds to one theta_l)
-        th_dist_tot = np.array(list(map(np.sum,th_dist)))
-        # q(theta) (N,)
-        q_th = (1/N/ht) * np.sum((1/np.sqrt(2*np.pi) * th_dist), axis=1)
+        # dq_dz = np.sum((-1/np.sqrt(2*np.pi)/hz**3) * z_raw_dist * z_dist * 
+                        # th_dist, axis=1) / th_dist_tot * q_th
         
-        z_raw_dist = np.subtract.outer(u_z, eta_z)
-        z_dist = np.exp((-1/(2*hz**2)) * (z_raw_dist**2))
-        # q(z|theta) (N,)
-        q_z  = np.sum((1/np.sqrt(2*np.pi)/hz * z_dist * th_dist), 
-                      axis=1) / th_dist_tot
-    
-        q = q_z * q_th
+        # dq_dt_1 = q_th
+        # dq_dt_2 = q_z
+        # dq_dt_3 = np.sum((-1/np.sqrt(2*np.pi)/ht**3/N) * th_raw_dist * th_dist,
+                          # axis=1)
+        # dq_dt_4 = (-1/np.sqrt(2*np.pi)/hz/ht**2 * 
+                    # np.sum(z_dist * th_raw_dist * th_dist, axis=1) * 
+                    # th_dist_tot - (1/np.sqrt(2*np.pi)/hz) * 
+                    # np.sum(z_dist*th_dist, axis=1) * (-1/ht**2) * 
+                    # np.sum(th_raw_dist*th_dist, axis=1)
+                    # ) / th_dist_tot**2
+        # dq_dt = dq_dt_4 * dq_dt_1 + dq_dt_2 * dq_dt_3    
         
-        dq_dz = np.sum((-1/np.sqrt(2*np.pi)/hz**3) * z_raw_dist * z_dist * 
-                        th_dist, axis=1) / th_dist_tot * q_th
-        
-        dq_dt_1 = q_th
-        dq_dt_2 = q_z
-        dq_dt_3 = np.sum((-1/np.sqrt(2*np.pi)/ht**3/N) * th_raw_dist * th_dist,
-                          axis=1)
-        dq_dt_4 = (-1/np.sqrt(2*np.pi)/hz/ht**2 * 
-                    np.sum(z_dist * th_raw_dist * th_dist, axis=1) * 
-                    th_dist_tot - (1/np.sqrt(2*np.pi)/hz) * 
-                    np.sum(z_dist*th_dist, axis=1) * (-1/ht**2) * 
-                    np.sum(th_raw_dist*th_dist, axis=1)
-                    ) / th_dist_tot**2
-        dq_dt = dq_dt_4 * dq_dt_1 + dq_dt_2 * dq_dt_3    
-        
-        dq = np.array((dq_dt, dq_dz))
-        pot = dq/(q)
+        # dq = np.array((dq_dt, dq_dz))
+        # pot = dq/(q)
         
     return pot
 
