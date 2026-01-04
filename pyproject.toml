@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyplom"
+version = "2.0.0"
+description = "Probabilistic Learning on Manifolds (PLoM)"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Philippe Hawi", email = "hawi@usc.edu"}
+]
+dependencies = [
+    "numpy>=1.20",
+    "scipy>=1.7",
+    "joblib>=1.1",
+    "matplotlib" 
+]
+
+[project.urls]
+Repository = "https://github.com/philippehawi/PLoM"
+
+[tool.setuptools.packages.find]
+include = ["plom*"]
+
+[tool.setuptools.package-data]
+# Include both Windows and Linux libraries.
+# The OS will simply ignore the extensions it doesn't recognize.
+plom = ["lib/*.so", "lib/*.dll", "lib/*.dylib"]

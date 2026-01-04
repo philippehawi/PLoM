@@ -1,7 +1,12 @@
 PLOM/
 ├── plom/
 │   ├── __init__.py
-│   ├── plom.py
+│   ├── core.py
+│   ├── manifold.py
+│   ├── plotting.py
+│   ├── preprocessing.py
+│   ├── sampling.py
+│   ├── utils.py
 │   ├── lib/
 │   │   ├── potential_eigen.dll
 │   │   ├── potential_native.dll
@@ -10,11 +15,7 @@ PLOM/
 │   ├── test_scripts/
 │   │   ├── check_potential_eigen.py
 │   │   ├── check_potential_native.py
-├── scripts/
-│   ├── input_template.txt
-│   ├── plom_make_input_template.py
-│   ├── plom_run.py
 ├── LICENSE
+├── pyproject.toml
 ├── README.md
-├── requirements.txt
 ├── setup.py  
