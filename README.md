@@ -28,7 +28,7 @@ pip install pyplom
 Or install from source in editable mode (recommended for development):
 
 ```bash
-git clone https://github.com/philippehawi/PLoM.git
+git clone https://github.com/philippe-hawi/PLoM.git
 cd PLoM
 pip install -e .
 ```
@@ -101,12 +101,12 @@ The `PLoM` class manages the entire pipeline. Key arguments include:
 
 ## Legacy Code
 
-If you are looking for the original dictionary-based implementation (v0.7.0 and earlier), it has been moved to the **[PLoM-Legacy](https://github.com/philippehawi/PLoM-Legacy)** repository.
+If you are looking for the original dictionary-based implementation (v0.7.0 and earlier), it has been moved to the **[PLoM-Legacy](https://github.com/philippe-hawi/PLoM-Legacy)** repository.
 
 To install the legacy version alongside this new version:
 
 ```bash
-git clone https://github.com/philippehawi/PLoM-Legacy.git
+git clone https://github.com/philippe-hawi/PLoM-Legacy.git
 cd PLoM-Legacy
 pip install -e 
 ```

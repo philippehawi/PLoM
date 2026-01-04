@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/philippehawi/PLoM"
+Repository = "https://github.com/philippe-hawi/PLoM"
 
 [tool.setuptools.packages.find]
 include = ["plom*"]
