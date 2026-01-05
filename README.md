@@ -131,4 +131,4 @@ pip install -e
 
 ## Examples
 * [Example 1: 2 circles in 2 dimensions](examples/circles2d/circles2d_run.ipynb)
-* [Example 2: spiral in 3 dimensions](examples/spiral3d/spiral_script.ipynb)
+* [Example 2: spiral in 3 dimensions](examples/spiral3d/spiral3d_run.ipynb)
