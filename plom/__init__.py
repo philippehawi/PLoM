@@ -9,7 +9,7 @@ from .sampling import ItoSampler
 # from .plotting import plot_2d_scatter, plot_3d_scatter, plot_eigenvalues
 
 # Define the package version (match pyproject.toml)
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 
 # Define what happens with 'from plom import *'
 __all__ = [
